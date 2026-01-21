@@ -1,0 +1,11 @@
+yfinance
+pandas
+numpy
+matplotlib
+pyarrow
+hyperliquid-python-sdk
+git+https://github.com/asterdex/aster-connector-python.git
+pytest
+pytest-mock
+fpdf2
+statsmodels
