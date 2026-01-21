@@ -218,6 +218,87 @@ def create_basis_timeseries_chart(asset: str, basis_df: pd.DataFrame) -> Path:
 
 
 # ============================================
+# Chart 2b: Tradeable Basis (Market Hours Only)
+# ============================================
+
+def create_tradeable_basis_chart(asset: str, basis_df: pd.DataFrame) -> Path:
+    """
+    Create basis timeseries chart for market hours only (tradeable periods).
+    
+    This shows only the periods when both TradFi and DeFi can be traded,
+    avoiding artificial basis from stale LOCF prices.
+    """
+    # Filter to market hours only
+    market_df = basis_df[basis_df["market_open"]].copy()
+    
+    if market_df.empty:
+        return None
+    
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    idx = market_df.index.tz_localize(None) if market_df.index.tz else market_df.index
+    bps = market_df["basis_bps"]
+    
+    # Shade regions where spread exceeds thresholds
+    ax.fill_between(idx, bps, 25, where=(bps > 25), 
+                    color="red", alpha=0.3, label="_nolegend_")
+    ax.fill_between(idx, bps, -25, where=(bps < -25), 
+                    color="red", alpha=0.3, label="_nolegend_")
+    ax.fill_between(idx, bps, 10, where=((bps > 10) & (bps <= 25)), 
+                    color="orange", alpha=0.2, label="_nolegend_")
+    ax.fill_between(idx, bps, -10, where=((bps < -10) & (bps >= -25)), 
+                    color="orange", alpha=0.2, label="_nolegend_")
+    
+    # Plot basis
+    ax.plot(idx, bps, color=COLORS["basis"], linewidth=0.8, alpha=0.9)
+    
+    # Add threshold bands
+    ax.axhline(y=25, color="red", linestyle="--", linewidth=1, alpha=0.7, label="±25 bps (strong)")
+    ax.axhline(y=-25, color="red", linestyle="--", linewidth=1, alpha=0.7, label="_nolegend_")
+    ax.axhline(y=10, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="±10 bps (moderate)")
+    ax.axhline(y=-10, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="_nolegend_")
+    ax.axhline(y=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
+    
+    # Add mean line
+    mean_bps = bps.mean()
+    ax.axhline(y=mean_bps, color="purple", linestyle=":", linewidth=1.5, alpha=0.8, 
+               label=f"Mean: {mean_bps:+.1f} bps")
+    
+    # Add stats annotation
+    std_bps = bps.std()
+    pct_gt_10 = (abs(bps) > 10).mean() * 100
+    pct_gt_25 = (abs(bps) > 25).mean() * 100
+    stats_text = f"Tradeable Stats:\nMean: {mean_bps:+.1f} bps\nStd: {std_bps:.1f} bps\n>10 bps: {pct_gt_10:.1f}%\n>25 bps: {pct_gt_25:.1f}%"
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=9,
+            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Formatting
+    ax.set_title(f"{asset} Tradeable Basis (Market Hours Only)", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Time (UTC)", fontsize=11)
+    ax.set_ylabel("Basis (bps)", fontsize=11)
+    ax.legend(loc="upper right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # Set y-axis limits with some padding
+    y_max = max(abs(bps.min()), abs(bps.max())) * 1.1
+    y_max = max(y_max, 30)  # Ensure we can see threshold lines
+    ax.set_ylim(-y_max, y_max)
+    
+    # Format x-axis
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    fig.autofmt_xdate()
+    
+    # Save
+    output_path = CHARTS_DIR / f"{asset.lower()}_tradeable_basis.png"
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    
+    return output_path
+
+
+# ============================================
 # Chart 3: Basis Distribution
 # ============================================
 
@@ -373,13 +454,21 @@ def calculate_statistics(basis_df: pd.DataFrame) -> dict:
         "pct_gt_20bps": (bps.abs() > 20).mean() * 100,
     }
     
-    # Market hours stats
+    # Market hours stats (tradeable periods)
     if "market_open" in basis_df.columns:
         market_hours = basis_df[basis_df["market_open"]]
         off_hours = basis_df[~basis_df["market_open"]]
         
         if len(market_hours) > 0:
-            stats["market_hours_mean_bps"] = market_hours["basis_bps"].mean()
+            mh_bps = market_hours["basis_bps"]
+            stats["market_hours"] = {
+                "count": len(market_hours),
+                "mean": mh_bps.mean(),
+                "std": mh_bps.std(),
+                "pct_gt_10bps": (mh_bps.abs() > 10).mean() * 100,
+                "pct_gt_25bps": (mh_bps.abs() > 25).mean() * 100,
+            }
+            stats["market_hours_mean_bps"] = mh_bps.mean()
         if len(off_hours) > 0:
             stats["off_hours_mean_bps"] = off_hours["basis_bps"].mean()
     
@@ -434,6 +523,11 @@ def run_visualization():
         print(f"  ✓ {chart2.name}")
         generated_charts.append(chart2)
         
+        chart2b = create_tradeable_basis_chart(asset, basis_df)
+        if chart2b:
+            print(f"  ✓ {chart2b.name}")
+            generated_charts.append(chart2b)
+        
         chart3 = create_basis_distribution_chart(asset, basis_df)
         print(f"  ✓ {chart3.name}")
         generated_charts.append(chart3)
@@ -478,6 +572,7 @@ def generate_executive_summary(all_stats: dict) -> tuple:
     half_lives = []
     hurst_values = []
     pct_gt_20bps_values = []
+    market_hours_stats = []  # Track market hours (tradeable) stats
     
     for asset, stats in all_stats.items():
         mr = stats.get("mean_reversion", {})
@@ -497,6 +592,18 @@ def generate_executive_summary(all_stats: dict) -> tuple:
         if hurst_val is not None:
             hurst_values.append(hurst_val)
         pct_gt_20bps_values.append(pct_20)
+        
+        # Collect market hours stats
+        mh = stats.get("market_hours", {})
+        if mh:
+            market_hours_stats.append({
+                "asset": asset,
+                "mean": mh.get("mean", 0),
+                "std": mh.get("std", 0),
+                "count": mh.get("count", 0),
+                "pct_gt_10": mh.get("pct_gt_10bps", 0),
+                "pct_gt_25": mh.get("pct_gt_25bps", 0),
+            })
         
         # Check if mean-reverting
         if (adf_p is not None and adf_p < 0.05 and 
@@ -571,7 +678,21 @@ def generate_executive_summary(all_stats: dict) -> tuple:
         else:
             methodology_text += f"Hurst exponents averaging {avg_hurst:.2f} suggest random walk or trending behavior. "
     
-    methodology_text += f"Approximately {avg_pct_20:.0f}% of observations show spreads exceeding 20 basis points."
+    methodology_text += f"Approximately {avg_pct_20:.0f}% of all observations show spreads exceeding 20 basis points. "
+    
+    # Add tradeable (market hours) emphasis
+    if market_hours_stats:
+        total_tradeable = sum(s["count"] for s in market_hours_stats)
+        avg_tradeable_mean = sum(abs(s["mean"]) for s in market_hours_stats) / len(market_hours_stats)
+        avg_tradeable_pct_10 = sum(s["pct_gt_10"] for s in market_hours_stats) / len(market_hours_stats)
+        avg_tradeable_pct_25 = sum(s["pct_gt_25"] for s in market_hours_stats) / len(market_hours_stats)
+        
+        methodology_text += (
+            f"IMPORTANT: During tradeable market hours only ({total_tradeable:,} bars), "
+            f"the average absolute basis is {avg_tradeable_mean:.1f} bps with {avg_tradeable_pct_10:.0f}% exceeding 10 bps "
+            f"and {avg_tradeable_pct_25:.0f}% exceeding 25 bps. Off-market hours use stale TradFi prices (LOCF) "
+            f"which can inflate apparent opportunities."
+        )
     
     return opportunity_text, methodology_text
 
@@ -602,10 +723,12 @@ def compile_charts_to_pdf(all_stats: dict = None) -> Path:
     # Get all chart files in order
     chart_files = [
         ("TSLA Price Comparison", CHARTS_DIR / "tsla_price_comparison.png"),
-        ("TSLA Basis Timeseries", CHARTS_DIR / "tsla_basis_timeseries.png"),
+        ("TSLA Basis Timeseries (All Data)", CHARTS_DIR / "tsla_basis_timeseries.png"),
+        ("TSLA Tradeable Basis (Market Hours Only)", CHARTS_DIR / "tsla_tradeable_basis.png"),
         ("TSLA Basis Distribution", CHARTS_DIR / "tsla_basis_distribution.png"),
         ("GOLD Price Comparison", CHARTS_DIR / "gold_price_comparison.png"),
-        ("GOLD Basis Timeseries", CHARTS_DIR / "gold_basis_timeseries.png"),
+        ("GOLD Basis Timeseries (All Data)", CHARTS_DIR / "gold_basis_timeseries.png"),
+        ("GOLD Tradeable Basis (Market Hours Only)", CHARTS_DIR / "gold_tradeable_basis.png"),
         ("GOLD Basis Distribution", CHARTS_DIR / "gold_basis_distribution.png"),
         ("Summary Table", CHARTS_DIR / "summary_table.png"),
     ]
