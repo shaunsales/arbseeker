@@ -30,10 +30,10 @@ BASIS_DIR = BASE_DIR / "output" / "backtest"
 CHARTS_DIR = BASE_DIR / "output" / "charts"
 REPORTS_DIR = BASE_DIR / "output" / "reports"
 
-# Assets to visualize
+# Assets to visualize: (name, yahoo_label, aster_label, asset_type)
 ASSETS = [
-    ("TSLA", "TSLA (Stock)", "TSLAUSDT (Aster)"),
-    ("GOLD", "GC=F (Gold Futures)", "XAUUSDT (Aster)"),
+    ("TSLA", "TSLA (Stock)", "TSLAUSDT (Aster)", "stock"),
+    ("GOLD", "GC=F (Gold Futures)", "XAUUSDT (Aster)", "futures"),
 ]
 
 # Chart styling
@@ -498,7 +498,7 @@ def run_visualization():
     all_stats = {}
     generated_charts = []
     
-    for asset, yahoo_label, aster_label in ASSETS:
+    for asset, yahoo_label, aster_label, _ in ASSETS:
         print(f"\n[{asset}] Generating charts...")
         
         # Load basis data
@@ -715,7 +715,7 @@ def compile_charts_to_pdf(all_stats: dict = None) -> Path:
     # Load stats if not provided
     if all_stats is None:
         all_stats = {}
-        for asset, _, _ in ASSETS:
+        for asset, _, _, _ in ASSETS:
             basis_df = load_basis_data(asset)
             if not basis_df.empty:
                 all_stats[asset] = calculate_statistics(basis_df)

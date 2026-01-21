@@ -25,15 +25,21 @@ BASE_DIR = Path(__file__).parent
 DATA_CLEANED_DIR = BASE_DIR / "data" / "cleaned"
 OUTPUT_DIR = BASE_DIR / "output" / "backtest"
 
-# Assets to analyze: (name, yahoo_label, aster_label)
+# Assets to analyze: (name, yahoo_label, aster_label, asset_type)
 ASSETS = [
-    ("TSLA", "TSLA (Stock)", "TSLAUSDT (Aster)"),
-    ("GOLD", "GC=F (Gold Futures)", "XAUUSDT (Aster)"),
+    ("TSLA", "TSLA (Stock)", "TSLAUSDT (Aster)", "stock"),
+    ("GOLD", "GC=F (Gold Futures)", "XAUUSDT (Aster)", "futures"),
 ]
 
-# NYSE market hours in UTC
+# NYSE market hours in UTC (for stocks like TSLA)
 NYSE_OPEN_UTC = time(14, 30)   # 9:30 AM ET
-NYSE_CLOSE_UTC = time(21, 0)  # 4:00 PM ET
+NYSE_CLOSE_UTC = time(21, 0)   # 4:00 PM ET
+
+# CME Globex hours in UTC (for futures like GOLD)
+# Gold futures trade Sunday 6 PM - Friday 5 PM ET with 1-hour daily break (5-6 PM ET)
+# In UTC: Sunday 23:00 - Friday 22:00, daily break 22:00-23:00
+CME_BREAK_START_UTC = time(22, 0)   # 5:00 PM ET - daily maintenance break
+CME_BREAK_END_UTC = time(23, 0)     # 6:00 PM ET - market reopens
 
 
 # ============================================
@@ -79,26 +85,52 @@ def calculate_basis(tradfi_mid: float, defi_mid: float) -> tuple:
     return basis_absolute, basis_bps
 
 
-def is_market_open(timestamp: pd.Timestamp) -> bool:
+def is_market_open(timestamp: pd.Timestamp, asset_type: str = "stock") -> bool:
     """
-    Check if NYSE is open at given UTC timestamp.
+    Check if market is open at given UTC timestamp.
     
-    NYSE hours: 9:30 AM - 4:00 PM ET (14:30 - 21:00 UTC)
-    Only on weekdays (Mon-Fri).
+    Args:
+        timestamp: UTC timestamp to check
+        asset_type: "stock" for NYSE hours, "futures" for CME Globex hours
+    
+    Returns:
+        True if market is open, False otherwise
     """
-    # Check if weekday (0=Mon, 4=Fri)
-    if timestamp.weekday() > 4:
-        return False
-    
-    # Check time
+    weekday = timestamp.weekday()  # 0=Mon, 6=Sun
     t = timestamp.time()
-    return NYSE_OPEN_UTC <= t < NYSE_CLOSE_UTC
+    
+    if asset_type == "futures":
+        # CME Globex: Sunday 6 PM - Friday 5 PM ET (23 hrs/day)
+        # Closed: Saturday all day, Friday after 5 PM ET, Sunday before 6 PM ET
+        # Daily break: 5-6 PM ET (22:00-23:00 UTC)
+        
+        # Saturday - fully closed
+        if weekday == 5:
+            return False
+        
+        # Sunday - only open after 23:00 UTC (6 PM ET)
+        if weekday == 6:
+            return t >= CME_BREAK_END_UTC
+        
+        # Friday - closed after 22:00 UTC (5 PM ET)
+        if weekday == 4:
+            return t < CME_BREAK_START_UTC
+        
+        # Mon-Thu: Open except during daily break (22:00-23:00 UTC)
+        return not (CME_BREAK_START_UTC <= t < CME_BREAK_END_UTC)
+    
+    else:  # stock
+        # NYSE: Mon-Fri 9:30 AM - 4:00 PM ET (14:30 - 21:00 UTC)
+        if weekday > 4:
+            return False
+        return NYSE_OPEN_UTC <= t < NYSE_CLOSE_UTC
 
 
 def calculate_basis_for_asset(
     yahoo_df: pd.DataFrame,
     aster_df: pd.DataFrame,
-    asset_name: str
+    asset_name: str,
+    asset_type: str = "stock"
 ) -> pd.DataFrame:
     """
     Calculate basis metrics for an asset.
@@ -107,6 +139,7 @@ def calculate_basis_for_asset(
         yahoo_df: Yahoo (TradFi) price data
         aster_df: Aster (DeFi) price data
         asset_name: Asset name for logging
+        asset_type: "stock" for NYSE hours, "futures" for CME Globex hours
     
     Returns:
         DataFrame with basis metrics
@@ -131,7 +164,7 @@ def calculate_basis_for_asset(
         defi_mid = aster_df.loc[ts, "mid"]
         
         basis_abs, basis_bps = calculate_basis(tradfi_mid, defi_mid)
-        market_open = is_market_open(ts)
+        market_open = is_market_open(ts, asset_type)
         
         basis_data.append({
             "timestamp": ts,
@@ -452,7 +485,7 @@ def run_basis_analysis():
     
     all_stats = {}
     
-    for asset, yahoo_label, aster_label in ASSETS:
+    for asset, yahoo_label, aster_label, asset_type in ASSETS:
         print(f"\n[{asset}] Analyzing {yahoo_label} vs {aster_label}...")
         
         # Load data
@@ -465,8 +498,8 @@ def run_basis_analysis():
         
         print(f"  Loaded {len(yahoo_df):,} Yahoo bars, {len(aster_df):,} Aster bars")
         
-        # Calculate basis
-        basis_df = calculate_basis_for_asset(yahoo_df, aster_df, asset)
+        # Calculate basis with appropriate market hours
+        basis_df = calculate_basis_for_asset(yahoo_df, aster_df, asset, asset_type)
         
         if basis_df.empty:
             continue
@@ -495,7 +528,7 @@ def run_basis_analysis():
     print("=" * 60)
     print(f"\nOutput saved to: {OUTPUT_DIR}/")
     
-    for asset, _, _ in ASSETS:
+    for asset, _, _, _ in ASSETS:
         if asset in all_stats:
             stats = all_stats[asset]
             mr = stats.get("mean_reversion", {})
