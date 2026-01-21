@@ -167,12 +167,24 @@ def create_basis_timeseries_chart(asset: str, basis_df: pd.DataFrame) -> Path:
             ax.axvspan(start_idx, ts, alpha=0.2, color=COLORS["market_hours"], label="_nolegend_")
             in_market = False
     
+    # Shade regions where spread exceeds thresholds (before plotting line)
+    ax.fill_between(idx, bps, 25, where=(bps > 25), 
+                    color="red", alpha=0.3, label="_nolegend_")
+    ax.fill_between(idx, bps, -25, where=(bps < -25), 
+                    color="red", alpha=0.3, label="_nolegend_")
+    ax.fill_between(idx, bps, 10, where=((bps > 10) & (bps <= 25)), 
+                    color="orange", alpha=0.2, label="_nolegend_")
+    ax.fill_between(idx, bps, -10, where=((bps < -10) & (bps >= -25)), 
+                    color="orange", alpha=0.2, label="_nolegend_")
+    
     # Plot basis
     ax.plot(idx, bps, color=COLORS["basis"], linewidth=0.6, alpha=0.8)
     
     # Add threshold bands
-    ax.axhline(y=20, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="+20 bps threshold")
-    ax.axhline(y=-20, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="-20 bps threshold")
+    ax.axhline(y=25, color="red", linestyle="--", linewidth=1, alpha=0.7, label="±25 bps (strong)")
+    ax.axhline(y=-25, color="red", linestyle="--", linewidth=1, alpha=0.7, label="_nolegend_")
+    ax.axhline(y=10, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="±10 bps (moderate)")
+    ax.axhline(y=-10, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="_nolegend_")
     ax.axhline(y=0, color="gray", linestyle="-", linewidth=0.5, alpha=0.5)
     
     # Add mean line
@@ -229,8 +241,10 @@ def create_basis_distribution_chart(asset: str, basis_df: pd.DataFrame) -> Path:
     ax1.axvline(x=bps.mean(), color="purple", linestyle="--", linewidth=2, 
                 label=f"Mean: {bps.mean():+.1f} bps")
     ax1.axvline(x=0, color="gray", linestyle="-", linewidth=1, alpha=0.5)
-    ax1.axvline(x=20, color="orange", linestyle="--", linewidth=1, alpha=0.7)
-    ax1.axvline(x=-20, color="orange", linestyle="--", linewidth=1, alpha=0.7)
+    ax1.axvline(x=10, color="orange", linestyle="--", linewidth=1, alpha=0.7, label="±10 bps")
+    ax1.axvline(x=-10, color="orange", linestyle="--", linewidth=1, alpha=0.7)
+    ax1.axvline(x=25, color="red", linestyle="--", linewidth=1, alpha=0.7, label="±25 bps")
+    ax1.axvline(x=-25, color="red", linestyle="--", linewidth=1, alpha=0.7)
     
     ax1.set_title(f"{asset} Basis Distribution (All Data)", fontsize=12, fontweight="bold")
     ax1.set_xlabel("Basis (bps)", fontsize=10)
