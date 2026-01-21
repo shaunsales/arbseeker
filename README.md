@@ -4,15 +4,6 @@
 
 Validates arbitrage opportunities between traditional finance (Yahoo Finance) and decentralized finance (Aster DEX) by analyzing price spreads and mean reversion characteristics.
 
-## Key Findings
-
-| Asset | Mean Basis | Half-life | Hurst | Result |
-|-------|-----------|-----------|-------|--------|
-| TSLA | +12.25 bps | 128 min | 0.22 | ✅ Mean-reverting |
-| GOLD | -6.97 bps | 77 min | 0.17 | ✅ Mean-reverting |
-
-Both assets show statistically significant mean reversion (ADF p < 0.0001), suggesting spreads close over time rather than persist.
-
 ## Quick Start
 
 ```bash
