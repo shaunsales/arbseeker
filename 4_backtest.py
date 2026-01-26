@@ -568,31 +568,7 @@ class BasisBacktester:
             qs.reports.metrics(returns, mode="full", display=True)
             return None
         
-        elif report_type == "html":
-            # Simple HTML report (basic metrics + plots)
-            print(f"\nGenerating simple HTML report...")
-            report_file = output_dir / f"quantstats_basic_{timestamp}.html"
-            
-            try:
-                qs.reports.basic(
-                    returns,
-                    benchmark=benchmark,
-                    output=str(report_file),
-                    title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
-                )
-                print(f"Report saved: {report_file}")
-            except Exception as e:
-                print(f"Note: Benchmark fetch failed, generating without benchmark")
-                qs.reports.basic(
-                    returns,
-                    output=str(report_file),
-                    title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
-                )
-                print(f"Report saved: {report_file}")
-            
-            return report_file
-            
-        else:  # "full" - complete HTML tearsheet
+        else:  # "html" or "full" - HTML tearsheet
             print(f"\nGenerating full HTML tearsheet...")
             report_file = output_dir / f"quantstats_full_{timestamp}.html"
             
@@ -708,7 +684,7 @@ def main():
                         help="Save results to files")
     parser.add_argument("--quantstats", type=str, nargs="?", const="basic",
                         choices=["basic", "metrics", "html", "full"],
-                        help="Generate QuantStats report: basic (console), metrics (table), html (simple HTML), full (complete tearsheet)")
+                        help="QuantStats report: basic (console), metrics (detailed table), html/full (HTML tearsheet)")
     parser.add_argument("--benchmark", type=str, default="GLD",
                         help="Benchmark ticker for QuantStats (default: GLD = SPDR Gold ETF)")
     
