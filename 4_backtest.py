@@ -568,11 +568,8 @@ class BasisBacktester:
             qs.reports.metrics(returns, mode="full", display=True)
             return None
         
-        else:  # "html", "full", or "pdf" - HTML/PDF tearsheet
-            is_pdf = report_type == "pdf"
-            print(f"\nGenerating {'PDF' if is_pdf else 'HTML'} tearsheet...")
-            
-            # Always generate HTML first
+        else:  # "html", "full", or "pdf" - HTML tearsheet
+            print(f"\nGenerating HTML tearsheet...")
             html_file = output_dir / f"quantstats_tearsheet_{timestamp}.html"
             
             try:
@@ -590,27 +587,15 @@ class BasisBacktester:
                     title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
                 )
             
-            if is_pdf:
-                # Convert HTML to PDF
-                try:
-                    from weasyprint import HTML
-                    pdf_file = output_dir / f"quantstats_tearsheet_{timestamp}.pdf"
-                    HTML(str(html_file)).write_pdf(str(pdf_file))
-                    print(f"PDF saved: {pdf_file}")
-                    # Clean up HTML file
-                    html_file.unlink()
-                    return pdf_file
-                except ImportError:
-                    print("ERROR: weasyprint not installed. Run: pip install weasyprint")
-                    print(f"HTML saved instead: {html_file}")
-                    return html_file
-                except Exception as e:
-                    print(f"PDF conversion failed: {e}")
-                    print(f"HTML saved instead: {html_file}")
-                    return html_file
-            else:
-                print(f"HTML saved: {html_file}")
-                return html_file
+            print(f"HTML saved: {html_file}")
+            
+            if report_type == "pdf":
+                # Open in browser for print-to-PDF
+                import subprocess
+                subprocess.run(["open", str(html_file)])
+                print("\n>>> Opened in browser. Press Cmd+P to print/save as PDF <<<")
+            
+            return html_file
 
 
 # ============================================
