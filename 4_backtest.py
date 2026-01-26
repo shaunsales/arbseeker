@@ -568,28 +568,49 @@ class BasisBacktester:
             qs.reports.metrics(returns, mode="full", display=True)
             return None
         
-        else:  # "html" or "full" - HTML tearsheet
-            print(f"\nGenerating full HTML tearsheet...")
-            report_file = output_dir / f"quantstats_full_{timestamp}.html"
+        else:  # "html", "full", or "pdf" - HTML/PDF tearsheet
+            is_pdf = report_type == "pdf"
+            print(f"\nGenerating {'PDF' if is_pdf else 'HTML'} tearsheet...")
+            
+            # Always generate HTML first
+            html_file = output_dir / f"quantstats_tearsheet_{timestamp}.html"
             
             try:
                 qs.reports.html(
                     returns,
                     benchmark=benchmark,
-                    output=str(report_file),
+                    output=str(html_file),
                     title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
                 )
-                print(f"Report saved: {report_file}")
             except Exception as e:
                 print(f"Note: Benchmark fetch failed, generating without benchmark")
                 qs.reports.html(
                     returns,
-                    output=str(report_file),
+                    output=str(html_file),
                     title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
                 )
-                print(f"Report saved: {report_file}")
             
-            return report_file
+            if is_pdf:
+                # Convert HTML to PDF
+                try:
+                    from weasyprint import HTML
+                    pdf_file = output_dir / f"quantstats_tearsheet_{timestamp}.pdf"
+                    HTML(str(html_file)).write_pdf(str(pdf_file))
+                    print(f"PDF saved: {pdf_file}")
+                    # Clean up HTML file
+                    html_file.unlink()
+                    return pdf_file
+                except ImportError:
+                    print("ERROR: weasyprint not installed. Run: pip install weasyprint")
+                    print(f"HTML saved instead: {html_file}")
+                    return html_file
+                except Exception as e:
+                    print(f"PDF conversion failed: {e}")
+                    print(f"HTML saved instead: {html_file}")
+                    return html_file
+            else:
+                print(f"HTML saved: {html_file}")
+                return html_file
 
 
 # ============================================
@@ -683,8 +704,8 @@ def main():
     parser.add_argument("--save", action="store_true",
                         help="Save results to files")
     parser.add_argument("--quantstats", type=str, nargs="?", const="basic",
-                        choices=["basic", "metrics", "html", "full"],
-                        help="QuantStats report: basic (console), metrics (detailed table), html/full (HTML tearsheet)")
+                        choices=["basic", "metrics", "html", "full", "pdf"],
+                        help="QuantStats report: basic (console), metrics (table), html/full (HTML), pdf (PDF)")
     parser.add_argument("--benchmark", type=str, default="GLD",
                         help="Benchmark ticker for QuantStats (default: GLD = SPDR Gold ETF)")
     
