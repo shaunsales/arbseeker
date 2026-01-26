@@ -1,8 +1,17 @@
 # ArbSeeker
 
-**TradFi-DeFi Basis Arbitrage Analysis**
+**CME-DeFi Gold Basis Arbitrage Analysis**
 
-Validates arbitrage opportunities between traditional finance (Yahoo Finance) and decentralized finance (Aster DEX) by analyzing price spreads and mean reversion characteristics.
+Analyzes basis arbitrage opportunities between CME Gold Futures and DeFi perpetuals on **Aster** and **Hyperliquid**, with full 3-venue comparison.
+
+## Key Results
+
+| Venue | Daily Volume | Mean Basis | Half-life | Profitable |
+|-------|--------------|------------|-----------|------------|
+| **Hyperliquid PAXG** | $9.3M | +6 bps | 35 min | ✅ >50 bps |
+| **Aster XAUUSDT** | $0.68M | -24 bps | 15 min | ✅ >50 bps |
+
+**Recommendation:** Hyperliquid PAXG as primary venue (14x more liquid).
 
 ## Quick Start
 
@@ -13,22 +22,21 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Run full pipeline
-python 1_data_acquisition.py    # Fetch max available 15-minute data
-python 1_generate_reports.py    # Generate price comparison PDFs
+python 1_data_acquisition.py    # Fetch CME + Aster + Hyperliquid data
 python 2_basis_analysis.py      # Calculate basis + mean reversion stats
-python 3_visualization.py       # Generate charts + final PDF report
+python 3_visualization.py       # Generate 3-venue comparison + PDF report
 ```
 
-## Pipeline Overview
+## Pipeline
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
 │  1. Data Acquisition│────▶│  2. Basis Analysis  │────▶│  3. Visualization   │
 │                     │     │                     │     │                     │
-│  • Yahoo Finance    │     │  • Spread calc      │     │  • Price charts     │
-│  • Aster DEX        │     │  • ADF test         │     │  • Basis timeseries │
-│  • LOCF alignment   │     │  • Half-life        │     │  • Distribution     │
-│                     │     │  • Hurst exponent   │     │  • PDF report       │
+│  • CME (TradingView)│     │  • Spread calc      │     │  • 3-venue charts   │
+│  • Aster DEX        │     │  • ADF test         │     │  • Volume analysis  │
+│  • Hyperliquid      │     │  • Half-life        │     │  • Threshold study  │
+│  • LOCF alignment   │     │  • Hurst exponent   │     │  • PDF report       │
 └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
 ```
 
@@ -37,50 +45,76 @@ python 3_visualization.py       # Generate charts + final PDF report
 ```
 output/
 ├── reports/
-│   ├── basis_analysis_report_*.pdf   # Main report with executive summary
-│   ├── tsla_price_comparison_*.pdf
-│   └── gold_price_comparison_*.pdf
+│   └── basis_analysis_report_*.pdf   # Executive summary + all charts
 ├── charts/
-│   ├── *_price_comparison.png
-│   ├── *_basis_timeseries.png
-│   ├── *_basis_distribution.png
+│   ├── gold_price_comparison.png     # CME vs Aster vs Hyperliquid
+│   ├── gold_basis_timeseries.png     # Both DeFi venues overlaid
+│   ├── gold_tradeable_basis.png      # Market hours only
+│   ├── gold_basis_distribution.png   # Histograms + stats
+│   ├── gold_volume_analysis.png      # Volume by venue
+│   ├── gold_threshold_analysis.png   # Profitability thresholds
+│   ├── venue_comparison.png          # Side-by-side metrics
 │   └── summary_table.png
 └── backtest/
-    ├── tsla_basis.csv
-    └── gold_basis.csv
+    ├── gold_analysis_15m.csv
+    └── gold_hl_analysis_15m.csv
 ```
-
-## Statistical Tests
-
-| Test | Purpose | Threshold |
-|------|---------|-----------|
-| **ADF** | Stationarity (mean-reverting?) | p < 0.05 |
-| **Half-life** | Reversion speed | Lower = faster |
-| **Hurst** | Mean-reverting vs trending | H < 0.5 = mean-reverting |
 
 ## Data Sources
 
-| Source | Type | Assets | Frequency |
-|--------|------|--------|-----------|
-| Yahoo Finance | TradFi | TSLA, GC=F | 1-minute |
-| Aster DEX | DeFi | TSLAUSDT, XAUUSDT | 1-minute |
+| Source | Symbol | Type | API |
+|--------|--------|------|-----|
+| TradingView | GC1! | CME Futures | tvDatafeed |
+| Aster DEX | XAUUSDT | DeFi Perp | REST /klines |
+| Hyperliquid | PAXG | DeFi Perp | REST /info |
+
+## Mean Reversion Tests
+
+| Test | Aster | Hyperliquid | Meaning |
+|------|-------|-------------|---------|
+| **ADF p-value** | <0.001 | <0.001 | Stationary ✅ |
+| **Half-life** | 15 min | 35 min | Reversion speed |
+| **Hurst** | 0.13 | 0.16 | Mean-reverting ✅ |
+
+## Trading Economics
+
+### Cost Structure (~18 bps round-trip)
+- CME commission: ~0.5 bps
+- DeFi taker fee: 3.5 bps
+- Slippage: 8 bps (4 executions)
+- Funding: 5 bps/day
+
+### Position Sizing (2% volume rule)
+| Venue | Max Position | Margin Required |
+|-------|--------------|-----------------|
+| Aster | $13.5K | $2K |
+| Hyperliquid | $186K | $28K |
+
+## Risks & Caveats
+
+1. **50% capture rate assumed** - needs backtest validation
+2. **15-min bars** - may miss execution details
+3. **Liquidity constrains size** - monitor order books
+4. **Funding rates vary** - can spike in volatile markets
 
 ## Testing
 
 ```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Run specific stage
-python -m pytest tests/test_basis_analysis.py -v
+python -m pytest tests/ -v    # 65 tests
 ```
-
-65 tests covering data acquisition, basis calculations, and visualization.
 
 ## Requirements
 
 - Python 3.10+
-- See `requirements.txt` for dependencies
+- See `requirements.txt`
+
+## Documentation
+
+See `PLAN.md` for detailed project documentation including:
+- Full analysis results
+- Capital sizing calculations
+- Strategy recommendations
+- Next steps
 
 ## License
 
