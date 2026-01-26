@@ -2,10 +2,11 @@
 """
 Stage 2: Basis Analysis
 
-Loads cleaned price data, aligns timestamps, calculates basis metrics,
-and generates backtest output for arbitrage analysis.
+Loads merged price data, calculates basis metrics, mean reversion statistics,
+volume analysis, and capital sizing for arbitrage strategy.
 
-Output: output/backtest/{asset}_basis.csv
+Input: data/cleaned/{asset}_merged_{interval}.parquet
+Output: output/backtest/{asset}_analysis.csv
 """
 
 from datetime import datetime, time, timezone
@@ -25,30 +26,44 @@ BASE_DIR = Path(__file__).parent
 DATA_CLEANED_DIR = BASE_DIR / "data" / "cleaned"
 OUTPUT_DIR = BASE_DIR / "output" / "backtest"
 
-# Assets to analyze: (name, yahoo_label, aster_label, asset_type)
+# Assets to analyze: (name, tradfi_label, defi_label)
 ASSETS = [
-    ("TSLA", "TSLA (Stock)", "TSLAUSDT (Aster)", "stock"),
-    ("GOLD", "GC=F (Gold Futures)", "XAUUSDT (Aster)", "futures"),
+    ("GOLD", "CME Gold Futures (GC1!)", "Aster XAUUSDT"),
+    ("GOLD_HL", "CME Gold Futures (GC1!)", "Hyperliquid PAXG"),
 ]
 
-# NYSE market hours in UTC (for stocks like TSLA)
-NYSE_OPEN_UTC = time(14, 30)   # 9:30 AM ET
-NYSE_CLOSE_UTC = time(21, 0)   # 4:00 PM ET
+# Default interval
+DEFAULT_INTERVAL = "15m"
 
-# CME Globex hours in UTC (for futures like GOLD)
-# Gold futures trade Sunday 6 PM - Friday 5 PM ET with 1-hour daily break (5-6 PM ET)
-# In UTC: Sunday 23:00 - Friday 22:00, daily break 22:00-23:00
-CME_BREAK_START_UTC = time(22, 0)   # 5:00 PM ET - daily maintenance break
-CME_BREAK_END_UTC = time(23, 0)     # 6:00 PM ET - market reopens
+# Capital sizing parameters and assumptions
+CAPITAL_SIZING = {
+    "volume_pct_conservative": 0.01,  # 1% of daily volume
+    "volume_pct_moderate": 0.02,      # 2% of daily volume  
+    "volume_pct_aggressive": 0.05,    # 5% of daily volume
+    "basis_capture_bps": 15,          # Conservative basis capture per trade
+    "cme_trading_hours": 23,          # CME open hours per day
+    "trade_capture_rate": 0.50,       # % of mean reversion cycles we can capture
+    
+    # Cost assumptions (per leg, per trade)
+    "cme_commission_per_contract": 2.50,  # CME futures commission
+    "cme_contract_size_oz": 100,          # 100 oz per GC contract
+    "aster_taker_fee_bps": 5,             # Aster taker fee ~5 bps
+    "slippage_bps": 2,                    # Estimated slippage per leg
+    "funding_rate_daily_bps": 1,          # Avg daily funding cost (perp)
+    
+    # Margin assumptions
+    "cme_margin_pct": 0.10,               # CME initial margin ~10%
+    "aster_margin_pct": 0.05,             # Aster margin at 20x = 5%
+}
 
 
 # ============================================
 # Data Loading
 # ============================================
 
-def load_price_data(asset: str, source: str) -> pd.DataFrame:
-    """Load cleaned price data from parquet."""
-    filepath = DATA_CLEANED_DIR / f"{asset.lower()}_{source}.parquet"
+def load_merged_data(asset: str, interval: str = DEFAULT_INTERVAL) -> pd.DataFrame:
+    """Load merged price data from parquet."""
+    filepath = DATA_CLEANED_DIR / f"{asset.lower()}_merged_{interval}.parquet"
     
     if not filepath.exists():
         print(f"  Warning: {filepath} not found")
@@ -58,127 +73,354 @@ def load_price_data(asset: str, source: str) -> pd.DataFrame:
 
 
 # ============================================
-# Basis Calculation Functions
+# Volume & Liquidity Analysis
 # ============================================
 
-def calculate_basis(tradfi_mid: float, defi_mid: float) -> tuple:
+def calculate_volume_stats(df: pd.DataFrame) -> dict:
     """
-    Calculate basis between TradFi and DeFi prices.
+    Calculate volume and liquidity statistics.
     
     Args:
-        tradfi_mid: TradFi mid price
-        defi_mid: DeFi mid price
+        df: Merged DataFrame with volume columns
     
     Returns:
-        Tuple of (basis_absolute, basis_bps)
-        - basis_absolute: DeFi - TradFi in $
-        - basis_bps: Basis in basis points (1 bps = 0.01%)
+        Dict with volume statistics
     """
-    basis_absolute = defi_mid - tradfi_mid
+    if df.empty:
+        return {}
     
-    # Calculate basis points: (defi - tradfi) / tradfi * 10000
-    if tradfi_mid != 0:
-        basis_bps = (basis_absolute / tradfi_mid) * 10000
+    # Filter to tradeable bars (CME open)
+    tradeable = df[df["tradfi_market_open"]] if "tradfi_market_open" in df.columns else df
+    
+    stats = {
+        "total_bars": len(df),
+        "tradeable_bars": len(tradeable),
+        "tradeable_pct": len(tradeable) / len(df) * 100 if len(df) > 0 else 0,
+    }
+    
+    # TradFi volume
+    if "tradfi_volume" in df.columns:
+        stats["tradfi_avg_volume"] = tradeable["tradfi_volume"].mean()
+        stats["tradfi_total_volume"] = tradeable["tradfi_volume"].sum()
+    
+    if "tradfi_dollar_volume" in df.columns:
+        stats["tradfi_avg_dollar_volume"] = tradeable["tradfi_dollar_volume"].mean()
+        stats["tradfi_total_dollar_volume"] = tradeable["tradfi_dollar_volume"].sum()
+    
+    # DeFi volume  
+    if "defi_volume" in df.columns:
+        stats["defi_avg_volume"] = tradeable["defi_volume"].mean()
+        stats["defi_total_volume"] = tradeable["defi_volume"].sum()
+    
+    if "defi_dollar_volume" in df.columns:
+        stats["defi_avg_dollar_volume"] = tradeable["defi_dollar_volume"].mean()
+        stats["defi_total_dollar_volume"] = tradeable["defi_dollar_volume"].sum()
+    
+    # Volume flags
+    if "both_have_volume" in df.columns:
+        stats["both_volume_bars"] = tradeable["both_have_volume"].sum()
+        stats["both_volume_pct"] = tradeable["both_have_volume"].mean() * 100
+    
+    # Estimate daily volumes
+    days_covered = (df.index.max() - df.index.min()).days
+    if days_covered > 0:
+        stats["days_covered"] = days_covered
+        stats["tradfi_daily_dollar_volume"] = stats.get("tradfi_total_dollar_volume", 0) / days_covered
+        stats["defi_daily_dollar_volume"] = stats.get("defi_total_dollar_volume", 0) / days_covered
+    
+    return stats
+
+
+# ============================================
+# Capital Sizing Analysis
+# ============================================
+
+def calculate_capital_sizing(
+    df: pd.DataFrame,
+    volume_stats: dict,
+    half_life_minutes: float,
+    interval_minutes: int = 15
+) -> dict:
+    """
+    Calculate capital sizing and return opportunities.
+    
+    ASSUMPTIONS:
+    - Position Size: Based on % of daily DeFi volume (limiting factor)
+    - Capital for Both Legs:
+        * CME leg: 10% margin (initial margin requirement)
+        * Aster leg: 5% margin (20x leverage available)
+        * Total margin = position_size * (10% + 5%) = 15% of notional
+        * BUT we show "notional" capital = position * 2 for clarity
+    - PnL Calculation:
+        * Gross PnL = position_size * basis_captured_bps * trades_per_day
+        * Net PnL = Gross - (CME fees + Aster fees + slippage + funding)
+    - Trade Frequency: 50% of theoretical mean reversion cycles
+    
+    Args:
+        df: Merged DataFrame
+        volume_stats: Volume statistics dict
+        half_life_minutes: Mean reversion half-life in minutes
+        interval_minutes: Bar interval in minutes
+    
+    Returns:
+        Dict with capital sizing recommendations
+    """
+    if df.empty or not volume_stats:
+        return {}
+    
+    # Get daily DeFi volume (limiting factor)
+    defi_daily_vol = volume_stats.get("defi_daily_dollar_volume", 0)
+    avg_price = df["tradfi_close"].mean() if "tradfi_close" in df.columns else 4500
+    
+    if defi_daily_vol <= 0:
+        return {"error": "No DeFi volume data"}
+    
+    # Trading cycles per day based on half-life
+    cme_hours = CAPITAL_SIZING["cme_trading_hours"]
+    capture_rate = CAPITAL_SIZING["trade_capture_rate"]
+    
+    if half_life_minutes > 0 and half_life_minutes != float('inf'):
+        cycles_per_day = (cme_hours * 60) / half_life_minutes
+        realistic_trades = cycles_per_day * capture_rate
     else:
-        basis_bps = 0.0
+        cycles_per_day = 0
+        realistic_trades = 0
     
-    return basis_absolute, basis_bps
-
-
-def is_market_open(timestamp: pd.Timestamp, asset_type: str = "stock") -> bool:
-    """
-    Check if market is open at given UTC timestamp.
+    # Cost calculations
+    aster_fee_bps = CAPITAL_SIZING["aster_taker_fee_bps"]
+    slippage_bps = CAPITAL_SIZING["slippage_bps"]
+    funding_bps = CAPITAL_SIZING["funding_rate_daily_bps"]
+    cme_commission = CAPITAL_SIZING["cme_commission_per_contract"]
+    cme_contract_oz = CAPITAL_SIZING["cme_contract_size_oz"]
     
-    Args:
-        timestamp: UTC timestamp to check
-        asset_type: "stock" for NYSE hours, "futures" for CME Globex hours
+    # CME commission in bps (per $100 oz contract at ~$4500/oz = $450K notional)
+    cme_fee_bps = (cme_commission / (avg_price * cme_contract_oz)) * 10000
     
-    Returns:
-        True if market is open, False otherwise
-    """
-    weekday = timestamp.weekday()  # 0=Mon, 6=Sun
-    t = timestamp.time()
+    # Total round-trip costs per trade (both legs, entry + exit)
+    # CME: 2 trades (open + close) * fee
+    # Aster: 2 trades (open + close) * fee
+    # Slippage: 4 executions * slippage
+    round_trip_cost_bps = (cme_fee_bps * 2) + (aster_fee_bps * 2) + (slippage_bps * 4)
     
-    if asset_type == "futures":
-        # CME Globex: Sunday 6 PM - Friday 5 PM ET (23 hrs/day)
-        # Closed: Saturday all day, Friday after 5 PM ET, Sunday before 6 PM ET
-        # Daily break: 5-6 PM ET (22:00-23:00 UTC)
+    # Margin requirements
+    cme_margin = CAPITAL_SIZING["cme_margin_pct"]
+    aster_margin = CAPITAL_SIZING["aster_margin_pct"]
+    
+    results = {
+        "defi_daily_volume": defi_daily_vol,
+        "half_life_minutes": half_life_minutes,
+        "cycles_per_day": cycles_per_day,
+        "realistic_trades_per_day": realistic_trades,
+        "avg_price": avg_price,
+        "assumptions": {
+            "basis_capture_bps": CAPITAL_SIZING["basis_capture_bps"],
+            "trade_capture_rate": capture_rate,
+            "round_trip_cost_bps": round_trip_cost_bps,
+            "cme_margin_pct": cme_margin,
+            "aster_margin_pct": aster_margin,
+            "funding_daily_bps": funding_bps,
+        },
+        "scenarios": []
+    }
+    
+    # Calculate scenarios
+    basis_capture_gross = CAPITAL_SIZING["basis_capture_bps"]
+    basis_capture_net = basis_capture_gross - round_trip_cost_bps
+    
+    for name, vol_pct in [("Conservative (1%)", 0.01), ("Moderate (2%)", 0.02), ("Aggressive (5%)", 0.05)]:
+        position_size = defi_daily_vol * vol_pct
         
-        # Saturday - fully closed
-        if weekday == 5:
-            return False
+        # Capital calculations
+        notional_both_legs = position_size * 2
+        margin_required = position_size * (cme_margin + aster_margin)
         
-        # Sunday - only open after 23:00 UTC (6 PM ET)
-        if weekday == 6:
-            return t >= CME_BREAK_END_UTC
+        # Use moderate trade count
+        trades_per_day = min(realistic_trades, 8) if realistic_trades > 0 else 5
         
-        # Friday - closed after 22:00 UTC (5 PM ET)
-        if weekday == 4:
-            return t < CME_BREAK_START_UTC
+        # PnL calculations
+        daily_pnl_gross = position_size * (basis_capture_gross / 10000) * trades_per_day
+        daily_pnl_net = position_size * (basis_capture_net / 10000) * trades_per_day
+        daily_funding_cost = position_size * (funding_bps / 10000)
+        daily_pnl_after_funding = daily_pnl_net - daily_funding_cost
         
-        # Mon-Thu: Open except during daily break (22:00-23:00 UTC)
-        return not (CME_BREAK_START_UTC <= t < CME_BREAK_END_UTC)
-    
-    else:  # stock
-        # NYSE: Mon-Fri 9:30 AM - 4:00 PM ET (14:30 - 21:00 UTC)
-        if weekday > 4:
-            return False
-        return NYSE_OPEN_UTC <= t < NYSE_CLOSE_UTC
-
-
-def calculate_basis_for_asset(
-    yahoo_df: pd.DataFrame,
-    aster_df: pd.DataFrame,
-    asset_name: str,
-    asset_type: str = "stock"
-) -> pd.DataFrame:
-    """
-    Calculate basis metrics for an asset.
-    
-    Args:
-        yahoo_df: Yahoo (TradFi) price data
-        aster_df: Aster (DeFi) price data
-        asset_name: Asset name for logging
-        asset_type: "stock" for NYSE hours, "futures" for CME Globex hours
-    
-    Returns:
-        DataFrame with basis metrics
-    """
-    if yahoo_df.empty or aster_df.empty:
-        print(f"  Missing data for {asset_name}")
-        return pd.DataFrame()
-    
-    # Align timestamps (inner join - only where both have data)
-    # Since LOCF was applied, they should mostly align
-    common_idx = yahoo_df.index.intersection(aster_df.index)
-    
-    if len(common_idx) == 0:
-        print(f"  No overlapping timestamps for {asset_name}")
-        return pd.DataFrame()
-    
-    # Create basis DataFrame
-    basis_data = []
-    
-    for ts in common_idx:
-        tradfi_mid = yahoo_df.loc[ts, "mid"]
-        defi_mid = aster_df.loc[ts, "mid"]
+        # Returns on margin (actual capital deployed)
+        annual_return_on_margin = (daily_pnl_after_funding * 365) / margin_required * 100 if margin_required > 0 else 0
+        # Returns on notional (for comparison)
+        annual_return_on_notional = (daily_pnl_after_funding * 365) / notional_both_legs * 100 if notional_both_legs > 0 else 0
         
-        basis_abs, basis_bps = calculate_basis(tradfi_mid, defi_mid)
-        market_open = is_market_open(ts, asset_type)
-        
-        basis_data.append({
-            "timestamp": ts,
-            "tradfi_mid": tradfi_mid,
-            "defi_mid": defi_mid,
-            "basis_absolute": basis_abs,
-            "basis_bps": basis_bps,
-            "market_open": market_open,
+        results["scenarios"].append({
+            "name": name,
+            "volume_pct": vol_pct * 100,
+            "position_size": position_size,
+            "notional_both_legs": notional_both_legs,
+            "margin_required": margin_required,
+            "trades_per_day": trades_per_day,
+            "daily_pnl_gross": daily_pnl_gross,
+            "daily_pnl_net": daily_pnl_net,
+            "daily_funding_cost": daily_funding_cost,
+            "daily_pnl_after_funding": daily_pnl_after_funding,
+            "annual_return_on_margin": annual_return_on_margin,
+            "annual_return_on_notional": annual_return_on_notional,
         })
     
-    df = pd.DataFrame(basis_data)
-    df.set_index("timestamp", inplace=True)
+    # Recommendation (2% rule)
+    rec_position = defi_daily_vol * 0.02
+    results["recommended_position"] = rec_position
+    results["recommended_margin"] = rec_position * (cme_margin + aster_margin)
+    results["recommended_notional"] = rec_position * 2
     
-    return df
+    return results
+
+
+# ============================================
+# Threshold-Based Opportunity Analysis
+# ============================================
+
+def calculate_threshold_opportunities(
+    df: pd.DataFrame,
+    thresholds: list = [20, 30, 50, 80, 100],
+    capture_rate: float = 0.50,
+    round_trip_cost_bps: float = 18.1
+) -> dict:
+    """
+    Analyze profitability at different basis entry thresholds.
+    
+    This addresses the key insight that while MEAN basis capture may be
+    unprofitable, a SELECTIVE strategy entering only on large dislocations
+    could be profitable.
+    
+    ASSUMPTIONS:
+    - Only enter when |basis| > threshold
+    - Capture X% of the basis on mean reversion
+    - Round-trip costs are fixed per trade
+    - Analysis uses market hours only (tradeable periods)
+    
+    Args:
+        df: Merged DataFrame with basis_bps and tradfi_market_open columns
+        thresholds: List of basis thresholds to analyze (in bps)
+        capture_rate: Fraction of basis assumed to be captured (0.5 = 50%)
+        round_trip_cost_bps: Total round-trip transaction costs in bps
+    
+    Returns:
+        Dict with threshold analysis results
+    """
+    if df.empty:
+        return {}
+    
+    # Filter to market hours only (tradeable periods)
+    market_col = "tradfi_market_open" if "tradfi_market_open" in df.columns else "market_open"
+    if market_col in df.columns:
+        market_df = df[df[market_col]].copy()
+    else:
+        market_df = df.copy()
+    
+    if market_df.empty:
+        return {}
+    
+    abs_basis = market_df["basis_bps"].abs()
+    days = (df.index.max() - df.index.min()).days
+    if days <= 0:
+        days = 1
+    
+    results = {
+        "total_tradeable_bars": len(market_df),
+        "days_analyzed": days,
+        "capture_rate": capture_rate,
+        "round_trip_cost_bps": round_trip_cost_bps,
+        "thresholds": [],
+        "tail_stats": {
+            "max_positive_bps": market_df["basis_bps"].max(),
+            "max_negative_bps": market_df["basis_bps"].min(),
+            "bars_gt_100": int((abs_basis > 100).sum()),
+            "bars_gt_200": int((abs_basis > 200).sum()),
+        }
+    }
+    
+    for threshold in thresholds:
+        triggered = abs_basis > threshold
+        count = int(triggered.sum())
+        
+        if count == 0:
+            results["thresholds"].append({
+                "threshold_bps": threshold,
+                "count": 0,
+                "pct_of_bars": 0,
+                "trades_per_day": 0,
+                "avg_basis_when_triggered": 0,
+                "captured_bps": 0,
+                "net_per_trade_bps": -round_trip_cost_bps,
+                "profitable": False,
+            })
+            continue
+        
+        pct_of_bars = count / len(market_df) * 100
+        trades_per_day = count / days
+        avg_basis_triggered = float(abs_basis[triggered].mean())
+        captured_bps = avg_basis_triggered * capture_rate
+        net_per_trade = captured_bps - round_trip_cost_bps
+        
+        results["thresholds"].append({
+            "threshold_bps": threshold,
+            "count": count,
+            "pct_of_bars": pct_of_bars,
+            "trades_per_day": trades_per_day,
+            "avg_basis_when_triggered": avg_basis_triggered,
+            "captured_bps": captured_bps,
+            "net_per_trade_bps": net_per_trade,
+            "profitable": net_per_trade > 0,
+        })
+    
+    # Find optimal threshold (best risk/reward)
+    profitable = [t for t in results["thresholds"] if t["profitable"]]
+    if profitable:
+        # Best = highest net per trade with reasonable frequency
+        best = max(profitable, key=lambda x: x["net_per_trade_bps"] * min(x["trades_per_day"], 20))
+        results["recommended_threshold"] = best["threshold_bps"]
+        results["recommended_net_bps"] = best["net_per_trade_bps"]
+    else:
+        results["recommended_threshold"] = None
+        results["recommended_net_bps"] = None
+    
+    return results
+
+
+def print_threshold_opportunities(threshold_stats: dict, asset_name: str):
+    """Print formatted threshold-based opportunity analysis."""
+    if not threshold_stats:
+        return
+    
+    print(f"\n  {asset_name} Threshold-Based Opportunity Analysis")
+    print("  " + "-" * 55)
+    
+    print(f"  ASSUMPTIONS:")
+    print(f"    Capture rate:        {threshold_stats['capture_rate']*100:.0f}% of basis when triggered")
+    print(f"    Round-trip costs:    {threshold_stats['round_trip_cost_bps']:.1f} bps")
+    print(f"    Tradeable bars:      {threshold_stats['total_tradeable_bars']:,}")
+    print(f"    Days analyzed:       {threshold_stats['days_analyzed']}")
+    
+    tail = threshold_stats.get("tail_stats", {})
+    print(f"\n  TAIL STATISTICS:")
+    print(f"    Max positive basis:  {tail.get('max_positive_bps', 0):.0f} bps")
+    print(f"    Max negative basis:  {tail.get('max_negative_bps', 0):.0f} bps")
+    print(f"    Bars > 100 bps:      {tail.get('bars_gt_100', 0):,}")
+    print(f"    Bars > 200 bps:      {tail.get('bars_gt_200', 0):,}")
+    
+    print(f"\n  THRESHOLD ANALYSIS:")
+    print(f"  {'Threshold':>10} {'Count':>8} {'Freq':>8} {'Avg Basis':>10} {'Captured':>10} {'Net/Trade':>10} {'Status':>10}")
+    print("  " + "-" * 68)
+    
+    for t in threshold_stats.get("thresholds", []):
+        status = "✓ PROFIT" if t["profitable"] else "✗ LOSS"
+        print(f"  {t['threshold_bps']:>8} bps {t['count']:>8,} {t['trades_per_day']:>6.1f}/d {t['avg_basis_when_triggered']:>8.0f} bps {t['captured_bps']:>8.1f} bps {t['net_per_trade_bps']:>+8.1f} bps {status:>10}")
+    
+    rec = threshold_stats.get("recommended_threshold")
+    if rec:
+        print(f"\n  RECOMMENDATION:")
+        print(f"    Entry threshold:     > {rec} bps")
+        print(f"    Expected net/trade:  {threshold_stats['recommended_net_bps']:+.1f} bps")
+        print(f"    Note: Requires backtest validation on minute-level data")
+    else:
+        print(f"\n  RECOMMENDATION: No profitable threshold found with current assumptions")
 
 
 # ============================================
@@ -463,91 +705,204 @@ def print_statistics(stats: dict, asset_name: str):
 # Output Functions
 # ============================================
 
-def save_basis_to_csv(basis_df: pd.DataFrame, asset: str) -> Path:
-    """Save basis data to CSV."""
+def save_analysis_to_csv(df: pd.DataFrame, asset: str, interval: str) -> Path:
+    """Save analysis data to CSV."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
-    filepath = OUTPUT_DIR / f"{asset.lower()}_basis.csv"
-    basis_df.to_csv(filepath)
+    filepath = OUTPUT_DIR / f"{asset.lower()}_analysis_{interval}.csv"
+    df.to_csv(filepath)
     
     return filepath
+
+
+def print_volume_stats(vol_stats: dict, asset_name: str):
+    """Print formatted volume statistics."""
+    if not vol_stats:
+        return
+    
+    print(f"\n  {asset_name} Volume & Liquidity")
+    print("  " + "-" * 40)
+    print(f"  Days covered:      {vol_stats.get('days_covered', 'N/A')}")
+    print(f"  Total bars:        {vol_stats.get('total_bars', 0):,}")
+    print(f"  Tradeable bars:    {vol_stats.get('tradeable_bars', 0):,} ({vol_stats.get('tradeable_pct', 0):.1f}%)")
+    
+    if "tradfi_daily_dollar_volume" in vol_stats:
+        print(f"\n  TradFi (CME):")
+        print(f"    Daily volume:    ${vol_stats['tradfi_daily_dollar_volume']/1e6:.1f}M")
+    
+    if "defi_daily_dollar_volume" in vol_stats:
+        print(f"  DeFi (Aster):")
+        print(f"    Daily volume:    ${vol_stats['defi_daily_dollar_volume']/1e6:.2f}M")
+    
+    if "both_volume_pct" in vol_stats:
+        print(f"\n  Both have volume:  {vol_stats.get('both_volume_bars', 0):,} bars ({vol_stats['both_volume_pct']:.1f}%)")
+
+
+def print_capital_sizing(cap_stats: dict, asset_name: str):
+    """Print formatted capital sizing recommendations with assumptions."""
+    if not cap_stats or "error" in cap_stats:
+        return
+    
+    assumptions = cap_stats.get("assumptions", {})
+    
+    print(f"\n  {asset_name} Capital Sizing & Returns")
+    print("  " + "-" * 55)
+    
+    # Assumptions section
+    print(f"  ASSUMPTIONS:")
+    print(f"    Basis capture (gross):   {assumptions.get('basis_capture_bps', 15)} bps/trade")
+    print(f"    Round-trip costs:        {assumptions.get('round_trip_cost_bps', 0):.1f} bps")
+    print(f"      (CME fees + Aster fees + slippage × 4 executions)")
+    print(f"    Trade capture rate:      {assumptions.get('trade_capture_rate', 0.5)*100:.0f}% of cycles")
+    print(f"    Daily funding cost:      {assumptions.get('funding_daily_bps', 1)} bps")
+    print(f"    CME margin:              {assumptions.get('cme_margin_pct', 0.1)*100:.0f}%")
+    print(f"    Aster margin (20x):      {assumptions.get('aster_margin_pct', 0.05)*100:.0f}%")
+    
+    print(f"\n  MARKET DATA:")
+    print(f"    DeFi daily volume:       ${cap_stats['defi_daily_volume']/1e6:.2f}M (limiting factor)")
+    print(f"    Avg gold price:          ${cap_stats.get('avg_price', 4500):,.0f}/oz")
+    print(f"    Half-life:               {cap_stats['half_life_minutes']:.0f} min")
+    print(f"    Cycles/day:              {cap_stats['cycles_per_day']:.0f}")
+    print(f"    Realistic trades:        {cap_stats['realistic_trades_per_day']:.0f}/day")
+    
+    print(f"\n  SCENARIOS:")
+    print(f"  {'Strategy':<18} {'Position':>10} {'Margin':>10} {'PnL Gross':>10} {'PnL Net':>10} {'ROI/Margin':>12}")
+    print("  " + "-" * 72)
+    
+    for s in cap_stats.get("scenarios", []):
+        print(f"  {s['name']:<18} ${s['position_size']:>8,.0f} ${s['margin_required']:>8,.0f} ${s['daily_pnl_gross']:>8,.0f} ${s['daily_pnl_after_funding']:>8,.0f} {s['annual_return_on_margin']:>10.0f}%")
+    
+    print(f"\n  RECOMMENDATION (2% volume rule):")
+    print(f"    Position size:   ${cap_stats['recommended_position']:,.0f}")
+    print(f"    Margin required: ${cap_stats['recommended_margin']:,.0f} (actual capital needed)")
+    print(f"    Notional:        ${cap_stats['recommended_notional']:,.0f} (both legs)")
 
 
 # ============================================
 # Main Analysis Pipeline
 # ============================================
 
-def run_basis_analysis():
-    """Run basis analysis for all configured assets."""
+def run_basis_analysis(interval: str = DEFAULT_INTERVAL):
+    """
+    Run basis analysis for all configured assets using merged data.
+    
+    Args:
+        interval: Data interval (e.g., '15m')
+    """
     print("=" * 60)
     print("Stage 2: Basis Analysis")
     print("=" * 60)
+    print(f"\nInterval: {interval}")
     
-    all_stats = {}
+    # Get interval in minutes for half-life calculation
+    interval_map = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+    interval_minutes = interval_map.get(interval, 15)
     
-    for asset, yahoo_label, aster_label, asset_type in ASSETS:
-        print(f"\n[{asset}] Analyzing {yahoo_label} vs {aster_label}...")
+    all_results = {}
+    
+    for asset, tradfi_label, defi_label in ASSETS:
+        print(f"\n[{asset}] Analyzing {tradfi_label} vs {defi_label}...")
         
-        # Load data
-        yahoo_df = load_price_data(asset, "yahoo")
-        aster_df = load_price_data(asset, "aster")
+        # Load merged data
+        df = load_merged_data(asset, interval)
         
-        if yahoo_df.empty or aster_df.empty:
-            print(f"  Skipping {asset} - missing data")
+        if df.empty:
+            print(f"  Skipping {asset} - no merged data found")
             continue
         
-        print(f"  Loaded {len(yahoo_df):,} Yahoo bars, {len(aster_df):,} Aster bars")
+        print(f"  Loaded {len(df):,} merged bars")
+        print(f"  Date range: {df.index.min().date()} to {df.index.max().date()}")
         
-        # Calculate basis with appropriate market hours
-        basis_df = calculate_basis_for_asset(yahoo_df, aster_df, asset, asset_type)
+        # Store results
+        asset_results = {"data": df}
         
-        if basis_df.empty:
-            continue
-        
-        print(f"  Calculated basis for {len(basis_df):,} aligned bars")
-        
-        # Calculate statistics
-        stats = calculate_basis_statistics(basis_df)
-        all_stats[asset] = stats
-        
-        # Print statistics
+        # 1. Basis Statistics
+        stats = calculate_basis_statistics(df)
+        asset_results["basis_stats"] = stats
         print_statistics(stats, asset)
         
-        # Calculate and print mean reversion statistics
-        mr_stats = calculate_mean_reversion_stats(basis_df)
-        all_stats[asset]["mean_reversion"] = mr_stats
+        # 2. Mean Reversion Analysis
+        mr_stats = calculate_mean_reversion_stats(df)
+        asset_results["mean_reversion"] = mr_stats
         print_mean_reversion_stats(mr_stats, asset)
         
-        # Save to CSV
-        csv_path = save_basis_to_csv(basis_df, asset)
+        # Get half-life for capital sizing
+        half_life = mr_stats.get("half_life", {}).get("half_life_minutes", 60)
+        if half_life == float('inf'):
+            half_life = 60  # Default fallback
+        
+        # Adjust half-life for interval (original calc assumes 1m data)
+        half_life_adjusted = half_life * interval_minutes
+        
+        # 3. Volume Statistics
+        vol_stats = calculate_volume_stats(df)
+        asset_results["volume_stats"] = vol_stats
+        print_volume_stats(vol_stats, asset)
+        
+        # 4. Capital Sizing (Mean-Based)
+        cap_stats = calculate_capital_sizing(df, vol_stats, half_life_adjusted, interval_minutes)
+        asset_results["capital_sizing"] = cap_stats
+        print_capital_sizing(cap_stats, asset)
+        
+        # 5. Threshold-Based Opportunity Analysis
+        # Get round-trip cost from capital sizing assumptions
+        rt_cost = cap_stats.get("assumptions", {}).get("round_trip_cost_bps", 18.1)
+        threshold_stats = calculate_threshold_opportunities(df, round_trip_cost_bps=rt_cost)
+        asset_results["threshold_opportunities"] = threshold_stats
+        print_threshold_opportunities(threshold_stats, asset)
+        
+        # 6. Save analysis CSV
+        csv_path = save_analysis_to_csv(df, asset, interval)
         print(f"\n  ✓ Saved: {csv_path.name}")
+        
+        all_results[asset] = asset_results
     
     # Summary
     print("\n" + "=" * 60)
-    print("Basis Analysis Summary")
+    print("Analysis Summary")
     print("=" * 60)
     print(f"\nOutput saved to: {OUTPUT_DIR}/")
     
-    for asset, _, _, _ in ASSETS:
-        if asset in all_stats:
-            stats = all_stats[asset]
-            mr = stats.get("mean_reversion", {})
-            adf_p = mr.get("adf", {}).get("p_value", None)
+    for asset, _, _ in ASSETS:
+        if asset in all_results:
+            r = all_results[asset]
+            stats = r.get("basis_stats", {})
+            mr = r.get("mean_reversion", {})
+            vol = r.get("volume_stats", {})
+            cap = r.get("capital_sizing", {})
+            thresh = r.get("threshold_opportunities", {})
+            
             hl = mr.get("half_life", {}).get("half_life_minutes", None)
-            hurst = mr.get("hurst", {}).get("hurst_exponent", None)
+            hl_adj = hl * interval_minutes if hl and hl != float('inf') else None
             
-            adf_str = f"p={adf_p:.4f}" if adf_p else "N/A"
-            hl_str = f"{hl:.0f}m" if hl and hl != float('inf') else "N/A"
-            hurst_str = f"H={hurst:.2f}" if hurst else "N/A"
+            print(f"\n  {asset}:")
+            print(f"    Basis:       mean={stats.get('mean_bps', 0):+.1f} bps, std={stats.get('std_bps', 0):.1f} bps")
+            print(f"    Half-life:   {hl_adj:.0f} min" if hl_adj else "    Half-life:   N/A")
+            print(f"    DeFi volume: ${vol.get('defi_daily_dollar_volume', 0)/1e6:.2f}M/day")
+            print(f"    Max capital: ${cap.get('recommended_margin', 0):,.0f} (margin)")
             
-            print(f"  {asset:8} | Mean: {stats['mean_bps']:+6.2f} bps | ADF: {adf_str} | Half-life: {hl_str} | {hurst_str}")
+            # Threshold recommendation
+            rec_thresh = thresh.get("recommended_threshold")
+            if rec_thresh:
+                rec_net = thresh.get("recommended_net_bps", 0)
+                print(f"    Threshold:   >{rec_thresh} bps entry → +{rec_net:.1f} bps/trade (requires backtest)")
+            else:
+                print(f"    Threshold:   No profitable threshold found")
     
     print("\n" + "=" * 60)
     print("Stage 2 complete. Run Stage 3 for visualization.")
     print("=" * 60)
     
-    return all_stats
+    return all_results
 
 
 if __name__ == "__main__":
-    run_basis_analysis()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Basis Analysis Pipeline")
+    parser.add_argument("--interval", "-i", default=DEFAULT_INTERVAL,
+                        help=f"Data interval (default: {DEFAULT_INTERVAL})")
+    
+    args = parser.parse_args()
+    
+    run_basis_analysis(interval=args.interval)

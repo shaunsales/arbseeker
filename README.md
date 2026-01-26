@@ -13,7 +13,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Run full pipeline
-python 1_data_acquisition.py    # Fetch 14 days of minute data
+python 1_data_acquisition.py    # Fetch max available 15-minute data
 python 1_generate_reports.py    # Generate price comparison PDFs
 python 2_basis_analysis.py      # Calculate basis + mean reversion stats
 python 3_visualization.py       # Generate charts + final PDF report
