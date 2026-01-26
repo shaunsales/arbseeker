@@ -34,10 +34,23 @@ OUTPUT_DIR = Path("output/backtest")
 DEFAULT_CONFIG = {
     "capital": 100_000,           # Starting capital ($)
     "threshold_bps": 80,          # Entry threshold (bps)
-    "capture_rate": 0.50,         # % of basis captured
+    "capture_rate": 0.50,         # % of basis captured (legacy, not used in realistic mode)
     "max_trades_per_day": 10,     # Cap on daily trades
     "volume_limit_pct": 0.02,     # Max 2% of daily volume
     "venue": "hyperliquid",       # Primary venue
+}
+
+# Exit strategy parameters (hybrid model)
+EXIT_CONFIG = {
+    "take_profit_bps": 15,        # Exit when |basis| < this (reverted)
+    "stop_loss_bps": 80,          # Exit when basis widens by this amount  
+    "max_hold_halflifes": 4,      # Max hold time in half-lifes (~9 bars for HL)
+    "half_life_bars": {           # Half-life in 15-min bars
+        "hyperliquid": 2.3,       # 35 min / 15 min
+        "aster": 1.0,             # 15 min / 15 min
+    },
+    "stochastic_factor": 0.3,     # Reduce stochastic probability (0=off, 1=full)
+    "realistic_mode": True,       # Use hybrid exit vs instant reversion
 }
 
 # Cost structure (in bps)
@@ -86,6 +99,8 @@ class Trade:
     costs: float = 0.0
     net_pnl: float = 0.0
     status: str = "open"  # "open", "closed", "stopped"
+    exit_reason: str = ""  # "take_profit", "stop_loss", "time_stop", "stochastic"
+    bars_held: int = 0
 
 
 @dataclass
@@ -243,14 +258,31 @@ class BasisBacktester:
     
     def _simulate_trades(self, df: pd.DataFrame, position_size: float) -> List[Trade]:
         """
-        Simulate trades using threshold-based entry/exit.
+        Simulate trades using threshold-based entry with hybrid exit logic.
         
         Entry: |basis| > threshold
-        Exit: After capturing capture_rate of entry basis OR next bar (simplified)
+        Exit (first to trigger):
+            1. Take-profit: |basis| < take_profit_bps
+            2. Stop-loss: basis widened by stop_loss_bps
+            3. Time-stop: held > max_hold_halflifes * half_life
+            4. Stochastic: random exit with P = 1 - exp(-1/half_life)
         """
         trades = []
         current_trade: Optional[Trade] = None
         daily_trade_count = {}
+        bars_in_trade = 0
+        
+        # Exit parameters
+        tp_bps = EXIT_CONFIG["take_profit_bps"]
+        sl_bps = EXIT_CONFIG["stop_loss_bps"]
+        half_life_bars = EXIT_CONFIG["half_life_bars"].get(self.venue, 2.0)
+        max_hold_bars = int(EXIT_CONFIG["max_hold_halflifes"] * half_life_bars)
+        stochastic_factor = EXIT_CONFIG.get("stochastic_factor", 0.3)
+        realistic_mode = EXIT_CONFIG["realistic_mode"]
+        
+        # Stochastic exit probability per bar (reduced by factor)
+        base_prob = 1 - np.exp(-1 / half_life_bars)
+        exit_prob_per_bar = base_prob * stochastic_factor
         
         for i, (timestamp, row) in enumerate(df.iterrows()):
             current_date = timestamp.date()
@@ -263,24 +295,63 @@ class BasisBacktester:
             
             # Check for exit if in trade
             if current_trade is not None:
-                # Simplified exit: assume we capture capture_rate of entry basis
-                # In reality, this would check for mean reversion
-                captured_bps = abs(current_trade.entry_basis_bps) * self.capture_rate
+                bars_in_trade += 1
+                entry_basis = current_trade.entry_basis_bps
+                entry_abs = abs(entry_basis)
                 
-                # Close trade
-                current_trade.exit_time = timestamp
-                current_trade.exit_basis_bps = basis
-                current_trade.gross_pnl = position_size * (captured_bps / 10000)
-                current_trade.costs = position_size * (self.round_trip_cost_bps / 10000)
-                current_trade.net_pnl = current_trade.gross_pnl - current_trade.costs
-                current_trade.status = "closed"
+                exit_reason = None
+                captured_bps = 0
                 
-                trades.append(current_trade)
-                current_trade = None
-                continue
+                if realistic_mode:
+                    # BASIS ARB LOGIC: Spread is LOCKED at entry
+                    # Exit timing only affects funding costs
+                    # We exit when basis converges (for capital efficiency)
+                    
+                    # Locked spread = entry basis (always captured)
+                    locked_spread_bps = entry_abs
+                    
+                    # Check exit conditions
+                    # 1. Take-profit: basis reverted (ideal exit)
+                    if abs_basis < tp_bps:
+                        exit_reason = "take_profit"
+                    
+                    # 2. Time-stop: held too long (exit anyway for capital efficiency)
+                    elif bars_in_trade >= max_hold_bars:
+                        exit_reason = "time_stop"
+                    
+                    # 3. Stochastic exit (model natural exit timing variance)
+                    elif bars_in_trade >= half_life_bars and np.random.random() < exit_prob_per_bar:
+                        exit_reason = "stochastic"
+                    
+                    if exit_reason:
+                        # Gross P&L = locked spread (always positive if entry > threshold)
+                        captured_bps = locked_spread_bps
+                        # But add extra funding cost based on bars held
+                        bars_funding_cost = bars_in_trade * (COSTS["funding_daily_bps"] / 96)  # 96 bars/day
+                        captured_bps -= bars_funding_cost
+                else:
+                    # Legacy instant reversion mode
+                    exit_reason = "instant"
+                    captured_bps = entry_abs * self.capture_rate
+                
+                # If we have an exit reason, close the trade
+                if exit_reason:
+                    current_trade.exit_time = timestamp
+                    current_trade.exit_basis_bps = basis
+                    current_trade.exit_reason = exit_reason
+                    current_trade.bars_held = bars_in_trade
+                    current_trade.gross_pnl = position_size * (captured_bps / 10000)
+                    current_trade.costs = position_size * (self.round_trip_cost_bps / 10000)
+                    current_trade.net_pnl = current_trade.gross_pnl - current_trade.costs
+                    current_trade.status = "closed"
+                    
+                    trades.append(current_trade)
+                    current_trade = None
+                    bars_in_trade = 0
+                    continue
             
-            # Check for entry
-            if abs_basis > self.threshold_bps:
+            # Check for entry (only if not in trade)
+            if current_trade is None and abs_basis > self.threshold_bps:
                 # Check daily trade limit
                 if daily_trade_count[current_date] >= self.max_trades_per_day:
                     continue
@@ -297,14 +368,16 @@ class BasisBacktester:
                     position_size=position_size,
                     direction=direction,
                 )
-                
+                bars_in_trade = 0
                 daily_trade_count[current_date] += 1
         
         # Close any remaining open trade
         if current_trade is not None:
             current_trade.status = "stopped"
             current_trade.exit_time = df.index[-1]
-            current_trade.net_pnl = 0  # No profit on stopped trades
+            current_trade.exit_reason = "end_of_data"
+            current_trade.bars_held = bars_in_trade
+            current_trade.net_pnl = 0
             trades.append(current_trade)
         
         return trades
@@ -437,6 +510,18 @@ class BasisBacktester:
         print(f"Losing:          {result.losing_trades} ({result.losing_trades/max(result.total_trades,1)*100:.1f}%)")
         print(f"Trades/Day:      {result.total_trades/max(result.config['days'],1):.1f}")
         
+        # Exit reason breakdown (if realistic mode)
+        if EXIT_CONFIG["realistic_mode"] and result.trades:
+            exit_reasons = {}
+            for t in result.trades:
+                reason = t.exit_reason or "unknown"
+                exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+            
+            print(f"\n--- Exit Reasons ---")
+            for reason, count in sorted(exit_reasons.items(), key=lambda x: -x[1]):
+                pct = count / len(result.trades) * 100
+                print(f"{reason:15} {count:4} ({pct:5.1f}%)")
+        
         print(f"\n--- P&L Summary ---")
         print(f"Gross PnL:       ${result.total_gross_pnl:,.0f}")
         print(f"Total Costs:     ${result.total_costs:,.0f}")
@@ -477,6 +562,8 @@ class BasisBacktester:
                 "gross_pnl": t.gross_pnl,
                 "costs": t.costs,
                 "net_pnl": t.net_pnl,
+                "exit_reason": t.exit_reason,
+                "bars_held": t.bars_held,
                 "status": t.status,
             })
         
@@ -688,6 +775,8 @@ def main():
                         help="Run scenario analysis instead of single backtest")
     parser.add_argument("--save", action="store_true",
                         help="Save results to files")
+    parser.add_argument("--instant", action="store_true",
+                        help="Use instant reversion (legacy mode) instead of realistic exits")
     parser.add_argument("--quantstats", type=str, nargs="?", const="basic",
                         choices=["basic", "metrics", "html", "full", "pdf"],
                         help="QuantStats report: basic (console), metrics (table), html/full (HTML), pdf (PDF)")
@@ -695,6 +784,10 @@ def main():
                         help="Benchmark ticker for QuantStats (default: GLD = SPDR Gold ETF)")
     
     args = parser.parse_args()
+    
+    # Toggle realistic mode based on --instant flag
+    if args.instant:
+        EXIT_CONFIG["realistic_mode"] = False
     
     if args.scenario:
         run_scenario_analysis(capital=args.capital, venue=args.venue)
