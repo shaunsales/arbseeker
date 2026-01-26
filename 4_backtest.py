@@ -11,6 +11,7 @@ Usage:
     python 4_backtest.py --threshold 50           # >50 bps entry
     python 4_backtest.py --venue aster            # Use Aster instead
     python 4_backtest.py --capture-rate 0.3       # Conservative 30% capture
+    python 4_backtest.py --quantstats             # Generate QuantStats tearsheet
 """
 
 import argparse
@@ -508,6 +509,79 @@ class BasisBacktester:
         with open(summary_file, "w") as f:
             json.dump(summary, f, indent=2, default=str)
         print(f"Saved summary to: {summary_file}")
+    
+    def generate_quantstats_report(
+        self, 
+        result: BacktestResult, 
+        output_dir: Path = OUTPUT_DIR,
+        benchmark: str = "GLD"
+    ):
+        """
+        Generate QuantStats tearsheet from backtest results.
+        
+        Args:
+            result: BacktestResult from run()
+            output_dir: Directory to save HTML report
+            benchmark: Ticker for benchmark comparison (default: GLD)
+        """
+        try:
+            import quantstats as qs
+        except ImportError:
+            print("ERROR: quantstats not installed. Run: pip install quantstats")
+            return None
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Convert equity curve to returns
+        # QuantStats expects a Series of returns, not equity values
+        equity = result.equity_curve.copy()
+        equity.index = pd.to_datetime(equity.index)
+        
+        # Calculate daily returns
+        returns = equity.pct_change().dropna()
+        returns.name = "Basis Arb Strategy"
+        
+        # Extend metrics
+        qs.extend_pandas()
+        
+        print(f"\n--- QuantStats Analysis ---")
+        print(f"Period: {returns.index.min().date()} to {returns.index.max().date()}")
+        print(f"Trading days: {len(returns)}")
+        
+        # Print key metrics
+        print(f"\nKey Metrics:")
+        print(f"  CAGR:           {qs.stats.cagr(returns)*100:.1f}%")
+        print(f"  Sharpe:         {qs.stats.sharpe(returns):.2f}")
+        print(f"  Sortino:        {qs.stats.sortino(returns):.2f}")
+        print(f"  Max Drawdown:   {qs.stats.max_drawdown(returns)*100:.1f}%")
+        print(f"  Win Rate:       {qs.stats.win_rate(returns)*100:.1f}%")
+        print(f"  Profit Factor:  {qs.stats.profit_factor(returns):.2f}")
+        print(f"  Calmar:         {qs.stats.calmar(returns):.2f}")
+        
+        # Generate HTML report
+        report_file = output_dir / f"quantstats_report_{timestamp}.html"
+        
+        try:
+            # Try with benchmark
+            qs.reports.html(
+                returns,
+                benchmark=benchmark,
+                output=str(report_file),
+                title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
+            )
+            print(f"\nReport saved: {report_file}")
+        except Exception as e:
+            # Fallback without benchmark if it fails
+            print(f"Note: Benchmark ({benchmark}) fetch failed, generating without benchmark")
+            qs.reports.html(
+                returns,
+                output=str(report_file),
+                title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
+            )
+            print(f"\nReport saved: {report_file}")
+        
+        return report_file
 
 
 # ============================================
@@ -600,6 +674,10 @@ def main():
                         help="Run scenario analysis instead of single backtest")
     parser.add_argument("--save", action="store_true",
                         help="Save results to files")
+    parser.add_argument("--quantstats", action="store_true",
+                        help="Generate QuantStats tearsheet report")
+    parser.add_argument("--benchmark", type=str, default="GLD",
+                        help="Benchmark ticker for QuantStats (default: GLD)")
     
     args = parser.parse_args()
     
@@ -618,6 +696,9 @@ def main():
         
         if args.save:
             bt.save_results(result)
+        
+        if args.quantstats:
+            bt.generate_quantstats_report(result, benchmark=args.benchmark)
 
 
 if __name__ == "__main__":
