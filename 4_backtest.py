@@ -514,15 +514,17 @@ class BasisBacktester:
         self, 
         result: BacktestResult, 
         output_dir: Path = OUTPUT_DIR,
-        benchmark: str = "GLD"
+        benchmark: str = "GLD",
+        report_type: str = "basic"
     ):
         """
-        Generate QuantStats tearsheet from backtest results.
+        Generate QuantStats report from backtest results.
         
         Args:
             result: BacktestResult from run()
             output_dir: Directory to save HTML report
             benchmark: Ticker for benchmark comparison (default: GLD)
+            report_type: "basic" (console only), "metrics" (detailed console), "full" (HTML)
         """
         try:
             import quantstats as qs
@@ -534,54 +536,60 @@ class BasisBacktester:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Convert equity curve to returns
-        # QuantStats expects a Series of returns, not equity values
         equity = result.equity_curve.copy()
         equity.index = pd.to_datetime(equity.index)
-        
-        # Calculate daily returns
         returns = equity.pct_change().dropna()
         returns.name = "Basis Arb Strategy"
         
-        # Extend metrics
+        # Extend pandas with quantstats methods
         qs.extend_pandas()
         
-        print(f"\n--- QuantStats Analysis ---")
+        print(f"\n{'='*60}")
+        print(f"QUANTSTATS ANALYSIS")
+        print(f"{'='*60}")
+        print(f"Benchmark: {benchmark} (SPDR Gold Shares ETF)")
         print(f"Period: {returns.index.min().date()} to {returns.index.max().date()}")
         print(f"Trading days: {len(returns)}")
         
-        # Print key metrics
-        print(f"\nKey Metrics:")
-        print(f"  CAGR:           {qs.stats.cagr(returns)*100:.1f}%")
-        print(f"  Sharpe:         {qs.stats.sharpe(returns):.2f}")
-        print(f"  Sortino:        {qs.stats.sortino(returns):.2f}")
-        print(f"  Max Drawdown:   {qs.stats.max_drawdown(returns)*100:.1f}%")
-        print(f"  Win Rate:       {qs.stats.win_rate(returns)*100:.1f}%")
-        print(f"  Profit Factor:  {qs.stats.profit_factor(returns):.2f}")
-        print(f"  Calmar:         {qs.stats.calmar(returns):.2f}")
-        
-        # Generate HTML report
-        report_file = output_dir / f"quantstats_report_{timestamp}.html"
-        
-        try:
-            # Try with benchmark
-            qs.reports.html(
-                returns,
-                benchmark=benchmark,
-                output=str(report_file),
-                title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
-            )
-            print(f"\nReport saved: {report_file}")
-        except Exception as e:
-            # Fallback without benchmark if it fails
-            print(f"Note: Benchmark ({benchmark}) fetch failed, generating without benchmark")
-            qs.reports.html(
-                returns,
-                output=str(report_file),
-                title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
-            )
-            print(f"\nReport saved: {report_file}")
-        
-        return report_file
+        if report_type == "basic":
+            # Simple console output - key metrics only
+            print(f"\n--- Key Metrics ---")
+            print(f"CAGR:           {qs.stats.cagr(returns)*100:.1f}%")
+            print(f"Sharpe:         {qs.stats.sharpe(returns):.2f}")
+            print(f"Max Drawdown:   {qs.stats.max_drawdown(returns)*100:.1f}%")
+            print(f"Win Rate:       {qs.stats.win_rate(returns)*100:.1f}%")
+            print(f"Volatility:     {qs.stats.volatility(returns)*100:.1f}%")
+            print(f"Avg Return:     {returns.mean()*100:.3f}%/day")
+            return None
+            
+        elif report_type == "metrics":
+            # Detailed console metrics table
+            print(f"\n--- Detailed Metrics ---")
+            qs.reports.metrics(returns, mode="full", display=True)
+            return None
+            
+        else:  # "full" - HTML report
+            print(f"\nGenerating full HTML tearsheet...")
+            report_file = output_dir / f"quantstats_report_{timestamp}.html"
+            
+            try:
+                qs.reports.html(
+                    returns,
+                    benchmark=benchmark,
+                    output=str(report_file),
+                    title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
+                )
+                print(f"Report saved: {report_file}")
+            except Exception as e:
+                print(f"Note: Benchmark fetch failed, generating without benchmark")
+                qs.reports.html(
+                    returns,
+                    output=str(report_file),
+                    title=f"Basis Arbitrage - {VENUES[self.venue]['name']}",
+                )
+                print(f"Report saved: {report_file}")
+            
+            return report_file
 
 
 # ============================================
@@ -674,10 +682,11 @@ def main():
                         help="Run scenario analysis instead of single backtest")
     parser.add_argument("--save", action="store_true",
                         help="Save results to files")
-    parser.add_argument("--quantstats", action="store_true",
-                        help="Generate QuantStats tearsheet report")
+    parser.add_argument("--quantstats", type=str, nargs="?", const="basic",
+                        choices=["basic", "metrics", "full"],
+                        help="Generate QuantStats report: basic (console), metrics (detailed), full (HTML)")
     parser.add_argument("--benchmark", type=str, default="GLD",
-                        help="Benchmark ticker for QuantStats (default: GLD)")
+                        help="Benchmark ticker for QuantStats (default: GLD = SPDR Gold ETF)")
     
     args = parser.parse_args()
     
@@ -698,7 +707,7 @@ def main():
             bt.save_results(result)
         
         if args.quantstats:
-            bt.generate_quantstats_report(result, benchmark=args.benchmark)
+            bt.generate_quantstats_report(result, benchmark=args.benchmark, report_type=args.quantstats)
 
 
 if __name__ == "__main__":
