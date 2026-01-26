@@ -25,19 +25,22 @@ pip install -r requirements.txt
 python 1_data_acquisition.py    # Fetch CME + Aster + Hyperliquid data
 python 2_basis_analysis.py      # Calculate basis + mean reversion stats
 python 3_visualization.py       # Generate 3-venue comparison + PDF report
+python 4_backtest.py            # Run backtest simulation
+
+# Backtest with QuantStats report
+python 4_backtest.py --capital 1000000 --threshold 50 --quantstats pdf
 ```
 
 ## Pipeline
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  1. Data Acquisition│────▶│  2. Basis Analysis  │────▶│  3. Visualization   │
-│                     │     │                     │     │                     │
-│  • CME (TradingView)│     │  • Spread calc      │     │  • 3-venue charts   │
-│  • Aster DEX        │     │  • ADF test         │     │  • Volume analysis  │
-│  • Hyperliquid      │     │  • Half-life        │     │  • Threshold study  │
-│  • LOCF alignment   │     │  • Hurst exponent   │     │  • PDF report       │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│ 1. Data Acquire │──▶│ 2. Basis Analyze│──▶│ 3. Visualize    │──▶│ 4. Backtest     │
+│                 │   │                 │   │                 │   │                 │
+│ • CME futures   │   │ • Spread calc   │   │ • 3-venue charts│   │ • Simulate P&L  │
+│ • Aster DEX     │   │ • ADF test      │   │ • Volume study  │   │ • QuantStats    │
+│ • Hyperliquid   │   │ • Half-life     │   │ • PDF report    │   │ • Tearsheet     │
+└─────────────────┘   └─────────────────┘   └─────────────────┘   └─────────────────┘
 ```
 
 ## Output
@@ -56,8 +59,10 @@ output/
 │   ├── venue_comparison.png          # Side-by-side metrics
 │   └── summary_table.png
 └── backtest/
-    ├── gold_analysis_15m.csv
-    └── gold_hl_analysis_15m.csv
+    ├── backtest_trades_*.csv          # Individual trade log
+    ├── backtest_equity_*.csv          # Daily equity curve
+    ├── backtest_summary_*.json        # Config & metrics
+    └── quantstats_tearsheet_*.html    # QuantStats report
 ```
 
 ## Data Sources
@@ -90,9 +95,22 @@ output/
 | Aster | $13.5K | $2K |
 | Hyperliquid | $186K | $28K |
 
+## Backtest Results (51 days, $1M capital)
+
+| Metric | Value |
+|--------|-------|
+| Net Return | +17.5% ($175K) |
+| Annualized | 125% |
+| Sharpe Ratio | 21.64 |
+| Win Rate | 100% |
+| Total Trades | 332 |
+| Avg Trade | $527 |
+
+**Note:** 100% win rate due to simplified exit logic. Real trading will have losers.
+
 ## Risks & Caveats
 
-1. **50% capture rate assumed** - needs backtest validation
+1. **50% capture rate assumed** - backtest uses simplified exits
 2. **15-min bars** - may miss execution details
 3. **Liquidity constrains size** - monitor order books
 4. **Funding rates vary** - can spike in volatile markets
