@@ -148,6 +148,7 @@ class BasisBacktester:
         max_trades_per_day: int = DEFAULT_CONFIG["max_trades_per_day"],
         volume_limit_pct: float = DEFAULT_CONFIG["volume_limit_pct"],
         venue: str = DEFAULT_CONFIG["venue"],
+        daily_volume_override: float = None,  # Override daily volume assumption
     ):
         self.capital = capital
         self.threshold_bps = threshold_bps
@@ -155,6 +156,7 @@ class BasisBacktester:
         self.max_trades_per_day = max_trades_per_day
         self.volume_limit_pct = volume_limit_pct
         self.venue = venue
+        self.daily_volume_override = daily_volume_override
         
         # Calculate round-trip cost
         self.round_trip_cost_bps = (
@@ -197,7 +199,10 @@ class BasisBacktester:
             days = 1
             
         # Calculate daily volume in USD
-        if "defi_dollar_volume" in df.columns:
+        if self.daily_volume_override:
+            daily_volume = self.daily_volume_override
+            print(f"  Using volume override: ${daily_volume/1e6:.0f}M/day")
+        elif "defi_dollar_volume" in df.columns:
             daily_volume = df["defi_dollar_volume"].sum() / days
         else:
             avg_price = df["defi_close"].mean()
@@ -310,9 +315,24 @@ class BasisBacktester:
                     # Locked spread = entry basis (always captured)
                     locked_spread_bps = entry_abs
                     
-                    # Check exit conditions
+                    # Check if CME is about to close (must unwind before close)
+                    # CME Gold Futures (GC): Sun-Fri 5PM-4PM CT = 23:00-22:00 UTC
+                    # Daily maintenance break: 22:00-23:00 UTC (4PM-5PM CT)
+                    # Exit 30 min before close to ensure clean unwind
+                    market_closing = False
+                    bar_hour = timestamp.hour
+                    bar_minute = timestamp.minute
+                    # Exit if we're in the last 30 min before maintenance (21:30-22:00 UTC)
+                    if bar_hour == 21 and bar_minute >= 30:
+                        market_closing = True
+                    
+                    # Check exit conditions (priority order)
+                    # 0. Market close: MUST exit before CME closes
+                    if market_closing:
+                        exit_reason = "market_close"
+                    
                     # 1. Take-profit: basis reverted (ideal exit)
-                    if abs_basis < tp_bps:
+                    elif abs_basis < tp_bps:
                         exit_reason = "take_profit"
                     
                     # 2. Time-stop: held too long (exit anyway for capital efficiency)
@@ -324,11 +344,20 @@ class BasisBacktester:
                         exit_reason = "stochastic"
                     
                     if exit_reason:
-                        # Gross P&L = locked spread (always positive if entry > threshold)
-                        captured_bps = locked_spread_bps
-                        # But add extra funding cost based on bars held
-                        bars_funding_cost = bars_in_trade * (COSTS["funding_daily_bps"] / 96)  # 96 bars/day
-                        captured_bps -= bars_funding_cost
+                        # Gross P&L = ALWAYS the locked spread at entry
+                        gross_bps = locked_spread_bps
+                        
+                        # Additional costs based on exit conditions:
+                        # 1. Funding cost = daily rate × bars held
+                        funding_cost_bps = bars_in_trade * (COSTS["funding_daily_bps"] / 96)  # 96 bars/day
+                        
+                        # 2. Exit slippage = if basis hasn't converged, harder to exit
+                        #    Model as: remaining basis × slippage factor
+                        remaining_basis = abs_basis  # How much basis is left at exit
+                        exit_slippage_bps = remaining_basis * 0.1  # 10% of remaining basis as extra slippage
+                        
+                        # Net captured = gross - funding - exit slippage
+                        captured_bps = gross_bps - funding_cost_bps - exit_slippage_bps
                 else:
                     # Legacy instant reversion mode
                     exit_reason = "instant"
@@ -771,6 +800,8 @@ def main():
     parser.add_argument("--venue", type=str, default=DEFAULT_CONFIG["venue"],
                         choices=list(VENUES.keys()),
                         help="Trading venue")
+    parser.add_argument("--daily-volume", type=float, default=None,
+                        help="Override daily volume assumption (e.g., 50000000 for $50M)")
     parser.add_argument("--scenario", action="store_true",
                         help="Run scenario analysis instead of single backtest")
     parser.add_argument("--save", action="store_true",
@@ -797,6 +828,7 @@ def main():
             threshold_bps=args.threshold,
             capture_rate=args.capture_rate,
             venue=args.venue,
+            daily_volume_override=args.daily_volume,
         )
         
         result = bt.run()
