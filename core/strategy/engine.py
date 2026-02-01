@@ -459,7 +459,7 @@ class BacktestEngine:
                         entry_reason=signal.reason,
                     )
                     entry_bar_idx[leg_name] = idx
-                    current_capital -= costs.round_trip_cost(size) / 2
+                    # Note: costs are accounted for in trade.net_pnl on close
                     
                 elif signal.action == "sell" and pos is None:
                     # Calculate position size
@@ -478,7 +478,7 @@ class BacktestEngine:
                         entry_reason=signal.reason,
                     )
                     entry_bar_idx[leg_name] = idx
-                    current_capital -= costs.round_trip_cost(size) / 2
+                    # Note: costs are accounted for in trade.net_pnl on close
                     
                 elif signal.action == "close" and pos is not None:
                     bars_held = idx - entry_bar_idx.get(leg_name, idx)
