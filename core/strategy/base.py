@@ -41,6 +41,9 @@ class StrategyConfig:
     # Position sizing mode
     fixed_size: bool = False  # If True, use fixed position size (no compounding)
     fixed_size_amount: float = 0.0  # Fixed $ amount per trade (0 = use capital * max_position_pct)
+    
+    # Spread trading mode (for basis arb)
+    spread_pnl_mode: bool = False  # If True, calculate P&L based on spread convergence
 
 
 class SingleAssetStrategy(ABC):
@@ -258,3 +261,32 @@ class MultiLeggedStrategy(ABC):
         price1 = data[leg1].iloc[idx]["close"]
         price2 = data[leg2].iloc[idx]["close"]
         return (price2 - price1) / price1 * 10000
+    
+    def get_entry_basis(self) -> float:
+        """
+        Return the entry basis in bps for spread P&L calculation.
+        Override in subclass to track entry basis.
+        """
+        return 0.0
+    
+    def calculate_spread_pnl(
+        self,
+        entry_basis_bps: float,
+        exit_basis_bps: float,
+        notional: float,
+    ) -> float:
+        """
+        Calculate P&L for a spread trade based on basis convergence.
+        
+        Args:
+            entry_basis_bps: Basis at entry (in bps)
+            exit_basis_bps: Basis at exit (in bps)
+            notional: Position notional value
+            
+        Returns:
+            Gross P&L from basis convergence
+        """
+        # P&L = basis captured × notional / 10000
+        # We profit when |basis| decreases (spread converges)
+        captured_bps = abs(entry_basis_bps) - abs(exit_basis_bps)
+        return captured_bps * notional / 10000

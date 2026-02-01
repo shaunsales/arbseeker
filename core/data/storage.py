@@ -2,14 +2,20 @@
 Parquet storage utilities for OHLCV data.
 
 Storage structure:
-    data/{venue}/{market}/{ticker}/{interval}/{year}.parquet
+    data/{venue}/{market}/{ticker}/{interval}/{period}.parquet
 
-Example:
+Supported period formats:
+    - Yearly:  2024.parquet
+    - Monthly: 2024-10.parquet
+
+Examples:
     data/binance/futures/BTCUSDT/1h/2024.parquet
+    data/hyperliquid/perp/PAXG/15m/2025-10.parquet
 """
 
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import pandas as pd
 
 # Base data directory
@@ -21,37 +27,39 @@ def get_data_path(
     market: str,
     ticker: str,
     interval: str,
-    year: Optional[int] = None,
+    period: Optional[str] = None,
 ) -> Path:
     """
     Get the path to a data file or directory.
     
     Args:
         venue: Data source (e.g., 'binance', 'hyperliquid')
-        market: Market type (e.g., 'futures', 'spot')
-        ticker: Trading pair (e.g., 'BTCUSDT')
+        market: Market type (e.g., 'futures', 'spot', 'perp')
+        ticker: Trading pair (e.g., 'BTCUSDT', 'GC=F')
         interval: Bar interval (e.g., '1h', '15m')
-        year: Optional year for specific file
+        period: Optional period for specific file:
+                - Year: "2024" or 2024
+                - Month: "2024-10"
         
     Returns:
-        Path to directory (if year is None) or specific parquet file
+        Path to directory (if period is None) or specific parquet file
     """
     base_path = DATA_DIR / venue / market / ticker / interval
-    if year is not None:
-        return base_path / f"{year}.parquet"
+    if period is not None:
+        return base_path / f"{period}.parquet"
     return base_path
 
 
-def save_yearly(
+def save_ohlcv(
     df: pd.DataFrame,
     venue: str,
     market: str,
     ticker: str,
     interval: str,
-    year: int,
+    period: str,
 ) -> Path:
     """
-    Save OHLCV data for a specific year.
+    Save OHLCV data for a specific period (year or month).
     
     Args:
         df: DataFrame with OHLCV data (must have datetime index)
@@ -59,12 +67,12 @@ def save_yearly(
         market: Market type
         ticker: Trading pair
         interval: Bar interval
-        year: Year to save
+        period: Period string - "2024" for year, "2024-10" for month
         
     Returns:
         Path to saved file
     """
-    file_path = get_data_path(venue, market, ticker, interval, year)
+    file_path = get_data_path(venue, market, ticker, interval, period)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Ensure index is datetime
@@ -80,22 +88,51 @@ def save_yearly(
     return file_path
 
 
+def save_yearly(
+    df: pd.DataFrame,
+    venue: str,
+    market: str,
+    ticker: str,
+    interval: str,
+    year: int,
+) -> Path:
+    """Save OHLCV data for a specific year. Wrapper for save_ohlcv."""
+    return save_ohlcv(df, venue, market, ticker, interval, str(year))
+
+
+def save_monthly(
+    df: pd.DataFrame,
+    venue: str,
+    market: str,
+    ticker: str,
+    interval: str,
+    year: int,
+    month: int,
+) -> Path:
+    """Save OHLCV data for a specific month."""
+    period = f"{year}-{month:02d}"
+    return save_ohlcv(df, venue, market, ticker, interval, period)
+
+
 def load_ohlcv(
     venue: str,
     market: str,
     ticker: str,
     interval: str,
-    years: Optional[list[int]] = None,
+    periods: Optional[list[str]] = None,
 ) -> pd.DataFrame:
     """
-    Load OHLCV data for specified years.
+    Load OHLCV data for specified periods.
     
     Args:
         venue: Data source
         market: Market type
         ticker: Trading pair
         interval: Bar interval
-        years: List of years to load (None = all available)
+        periods: List of periods to load (None = all available)
+                 Supports: ["2024", "2025"] for years
+                          ["2025-10", "2025-11", "2025-12"] for months
+                          Mixed: ["2024", "2025-10", "2025-11"]
         
     Returns:
         Concatenated DataFrame with OHLCV data
@@ -105,17 +142,17 @@ def load_ohlcv(
     if not base_path.exists():
         raise FileNotFoundError(f"No data found at {base_path}")
     
-    # Get available years if not specified
-    if years is None:
-        years = list_available_years(venue, market, ticker, interval)
+    # Get available periods if not specified
+    if periods is None:
+        periods = list_available_periods(venue, market, ticker, interval)
     
-    if not years:
-        raise FileNotFoundError(f"No yearly data files found at {base_path}")
+    if not periods:
+        raise FileNotFoundError(f"No data files found at {base_path}")
     
     # Load and concatenate
     dfs = []
-    for year in sorted(years):
-        file_path = base_path / f"{year}.parquet"
+    for period in _sort_periods(periods):
+        file_path = base_path / f"{period}.parquet"
         if file_path.exists():
             df = pd.read_parquet(file_path)
             dfs.append(df)
@@ -123,7 +160,7 @@ def load_ohlcv(
             print(f"Warning: {file_path} not found, skipping")
     
     if not dfs:
-        raise FileNotFoundError(f"No data files found for years {years}")
+        raise FileNotFoundError(f"No data files found for periods {periods}")
     
     # Concatenate and sort
     result = pd.concat(dfs, axis=0)
@@ -135,6 +172,54 @@ def load_ohlcv(
     return result
 
 
+def _sort_periods(periods: list[str]) -> list[str]:
+    """Sort periods chronologically (years before months of same year)."""
+    def sort_key(p: str):
+        if "-" in p:  # Monthly: 2024-10
+            year, month = p.split("-")
+            return (int(year), int(month))
+        else:  # Yearly: 2024
+            return (int(p), 0)
+    return sorted(periods, key=sort_key)
+
+
+def _parse_period(filename: str) -> Optional[str]:
+    """Parse period from filename. Returns None if not a valid period."""
+    stem = Path(filename).stem
+    # Match yearly (2024) or monthly (2024-10)
+    if re.match(r"^\d{4}$", stem):  # Year only
+        return stem
+    elif re.match(r"^\d{4}-\d{2}$", stem):  # Year-month
+        return stem
+    return None
+
+
+def list_available_periods(
+    venue: str,
+    market: str,
+    ticker: str,
+    interval: str,
+) -> list[str]:
+    """
+    List all available periods (years and months) for a given data path.
+    
+    Returns:
+        Sorted list of periods (e.g., ["2024", "2025-10", "2025-11"])
+    """
+    base_path = get_data_path(venue, market, ticker, interval)
+    
+    if not base_path.exists():
+        return []
+    
+    periods = []
+    for file_path in base_path.glob("*.parquet"):
+        period = _parse_period(file_path.name)
+        if period:
+            periods.append(period)
+    
+    return _sort_periods(periods)
+
+
 def list_available_years(
     venue: str,
     market: str,
@@ -142,24 +227,14 @@ def list_available_years(
     interval: str,
 ) -> list[int]:
     """
-    List all available years for a given data path.
+    List all available full years for a given data path.
+    Backward compatible - only returns year files, not monthly.
     
     Returns:
         Sorted list of years with data
     """
-    base_path = get_data_path(venue, market, ticker, interval)
-    
-    if not base_path.exists():
-        return []
-    
-    years = []
-    for file_path in base_path.glob("*.parquet"):
-        try:
-            year = int(file_path.stem)
-            years.append(year)
-        except ValueError:
-            continue
-    
+    periods = list_available_periods(venue, market, ticker, interval)
+    years = [int(p) for p in periods if re.match(r"^\d{4}$", p)]
     return sorted(years)
 
 
@@ -212,20 +287,20 @@ def list_all_data() -> dict:
     return result
 
 
-def delete_year(
+def delete_period(
     venue: str,
     market: str,
     ticker: str,
     interval: str,
-    year: int,
+    period: str,
 ) -> bool:
     """
-    Delete a specific year's data file.
+    Delete a specific period's data file.
     
     Returns:
         True if file was deleted, False if it didn't exist
     """
-    file_path = get_data_path(venue, market, ticker, interval, year)
+    file_path = get_data_path(venue, market, ticker, interval, period)
     
     if file_path.exists():
         file_path.unlink()

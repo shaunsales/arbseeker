@@ -405,14 +405,36 @@ class BacktestEngine:
         for idx in range(len(common_index)):
             timestamp = common_index[idx]
             
+            # Check if all markets are open (skip if any closed)
+            all_markets_open = all(
+                data[leg].iloc[idx].get("market_open", True)
+                for leg in data_specs
+            )
+            
+            # Check if any market is near close (force close positions)
+            any_near_close = any(
+                data[leg].iloc[idx].get("near_close", False)
+                for leg in data_specs
+            )
+            
             # Update positions mark-to-market
             for leg_name, pos in positions.items():
                 if pos:
                     price = data[leg_name].iloc[idx]["close"]
                     pos.update_price(price)
             
-            # Get signals from strategy
-            signals = strategy.on_bar(idx, data, current_capital, positions)
+            # Force close all positions if market closing soon
+            if any_near_close and any(positions.values()):
+                signals = {
+                    leg: Signal.close(reason="market_closing")
+                    for leg, pos in positions.items() if pos
+                }
+            # Skip trading if any market is closed
+            elif not all_markets_open:
+                signals = {}  # Hold, don't trade
+            else:
+                # Get signals from strategy
+                signals = strategy.on_bar(idx, data, current_capital, positions)
             
             # Process signals for each leg
             for leg_name, signal in signals.items():
@@ -463,7 +485,24 @@ class BacktestEngine:
                     trade = pos.close(price, timestamp)
                     trade.bars_held = bars_held
                     trade.exit_reason = signal.reason
-                    trade.costs = costs.total_cost(pos.size, bars_held)
+                    
+                    # Spread P&L mode: calculate based on basis convergence
+                    if strategy.config.spread_pnl_mode:
+                        # Get entry and exit basis from strategy
+                        entry_basis = strategy.get_entry_basis()
+                        exit_basis = strategy.calculate_basis(data, idx, "tradfi", "defi")
+                        
+                        # Calculate spread P&L (split between legs)
+                        spread_gross_pnl = strategy.calculate_spread_pnl(
+                            entry_basis, exit_basis, pos.size
+                        )
+                        # Each leg gets half the spread P&L
+                        trade.gross_pnl = spread_gross_pnl / 2
+                        # Costs also split between legs (it's one spread trade, not two)
+                        trade.costs = costs.total_cost(pos.size, bars_held) / 2
+                    else:
+                        trade.costs = costs.total_cost(pos.size, bars_held)
+                    
                     trade.net_pnl = trade.gross_pnl - trade.costs
                     
                     current_capital += trade.net_pnl
