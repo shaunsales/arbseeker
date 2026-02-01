@@ -38,11 +38,11 @@ class BasisArbConfig:
     threshold_bps: float = 80.0
     
     # Exit: convergence threshold (captured bps from entry)
-    take_profit_captured_bps: float = 40.0
+    take_profit_captured_bps: float = 55.0  # Optimal from sweep
     
     # Exit: time-based (half-life multiples)
-    half_life_bars: float = 2.3      # Mean reversion half-life (35 min / 15 min)
-    max_half_lives: float = 4.0      # Exit after this many half-lives
+    half_life_bars: float = 2.5      # Mean reversion half-life (~37 min)
+    max_half_lives: float = 8.0      # ~20 bars max hold (~5 hours)
     
     # Trade limits
     max_trades_per_day: int = 16
