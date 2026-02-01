@@ -1,17 +1,19 @@
 # ArbSeeker
 
-**CME-DeFi Gold Basis Arbitrage Analysis**
+**Modular Backtesting Framework for TradFi-DeFi Basis Arbitrage**
 
-Analyzes basis arbitrage opportunities between CME Gold Futures and DeFi perpetuals on **Aster** and **Hyperliquid**, with full 3-venue comparison.
+A Python framework for developing and backtesting arbitrage strategies, with a fully optimized Gold Basis Arbitrage strategy trading CME Gold Futures vs Hyperliquid perpetuals.
 
-## Key Results
+## Performance (Optimized Strategy)
 
-| Venue | Daily Volume | Mean Basis | Half-life | Profitable |
-|-------|--------------|------------|-----------|------------|
-| **Hyperliquid PAXG** | $9.3M | +6 bps | 35 min | ✅ >50 bps |
-| **Aster XAUUSDT** | $0.68M | -24 bps | 15 min | ✅ >50 bps |
+| Metric | Value |
+|--------|-------|
+| **Annual Return** | 72% |
+| **Sharpe Ratio** | 2.14 |
+| **Win Rate** | 69% |
+| **Max Drawdown** | 1.4% |
 
-**Recommendation:** Hyperliquid PAXG as primary venue (14x more liquid).
+*With $500k/leg (2x leverage) on $1M capital*
 
 ## Quick Start
 
@@ -21,118 +23,114 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Run full pipeline
-python 1_data_acquisition.py    # Fetch CME + Aster + Hyperliquid data
-python 2_basis_analysis.py      # Calculate basis + mean reversion stats
-python 3_visualization.py       # Generate 3-venue comparison + PDF report
-python 4_backtest.py            # Run backtest simulation
+# Run BasisArb backtest
+PYTHONPATH=. python -c "
+from strategies.basis_arb import BasisArbitrage, BasisArbConfig
+from core.strategy import BacktestEngine, StrategyConfig, DataSpec
+from core.strategy.position import CostModel
 
-# Backtest with QuantStats report
-python 4_backtest.py --capital 1000000 --threshold 50 --quantstats pdf
+strategy = BasisArbitrage(
+    config=StrategyConfig(
+        name='BasisArb',
+        fixed_size=True,
+        fixed_size_amount=500000,
+        costs=CostModel(commission_bps=5.1, slippage_bps=4.0, funding_daily_bps=5.0),
+    ),
+    arb_config=BasisArbConfig(),
+    tradfi_spec=DataSpec('test', 'futures', 'GC', '15m'),
+    defi_spec=DataSpec('test', 'perp', 'PAXG', '15m'),
+)
+
+result = BacktestEngine().run(strategy=strategy, capital=1_000_000)
+print(f'Net P&L: \${sum(t.net_pnl for t in result.trades):,.0f}')
+print(f'Sharpe: {result.sharpe_ratio:.2f}')
+"
 ```
 
-## Pipeline
+## Framework Architecture
 
 ```
-┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│ 1. Data Acquire │──▶│ 2. Basis Analyze│──▶│ 3. Visualize    │──▶│ 4. Backtest     │
-│                 │   │                 │   │                 │   │                 │
-│ • CME futures   │   │ • Spread calc   │   │ • 3-venue charts│   │ • Simulate P&L  │
-│ • Aster DEX     │   │ • ADF test      │   │ • Volume study  │   │ • QuantStats    │
-│ • Hyperliquid   │   │ • Half-life     │   │ • PDF report    │   │ • Tearsheet     │
-└─────────────────┘   └─────────────────┘   └─────────────────┘   └─────────────────┘
+core/
+├── data/           # Data infrastructure
+│   ├── storage.py      # Parquet I/O (yearly/monthly)
+│   ├── yahoo.py        # Yahoo Finance downloader
+│   ├── hyperliquid.py  # Hyperliquid API
+│   └── market_hours.py # CME hours + auto-close
+├── indicators/     # Technical indicators (pandas-ta)
+└── strategy/       # Backtesting engine
+    ├── base.py         # SingleAssetStrategy, MultiLeggedStrategy
+    ├── position.py     # Position, Trade, CostModel
+    └── engine.py       # BacktestEngine
+
+strategies/
+└── basis_arb.py    # BasisArbitrage(MultiLeggedStrategy)
 ```
+
+## BasisArb Strategy
+
+**Entry:** `|basis| > 80 bps`
+
+**Exit:**
+1. Take-profit: Captured 55 bps
+2. Time-expiry: ~5 hours max hold
+3. Market-close: Auto-close 15 min before CME close
+
+**No stop-loss** - spread is locked at entry; widening just means wait longer.
+
+### Optimal Parameters
+```python
+threshold_bps = 80.0
+take_profit_captured_bps = 55.0
+half_life_bars = 2.5
+max_half_lives = 8.0
+```
+
+## Leverage Scaling
+
+| Position/Leg | Leverage | Annual Return |
+|--------------|----------|---------------|
+| $250k | 0.5x | 36% |
+| $500k | 1.0x | 72% |
+| $1.75M | 3.5x | 203% |
+
+## Cost Model (~18 bps round-trip)
+
+- CME commission: 0.1 bps
+- DeFi taker fee: 5.0 bps
+- Slippage: 4.0 bps
+- Funding: 5.0 bps/day
+
+## Data Sources
+
+| Source | Symbol | Type |
+|--------|--------|------|
+| Yahoo Finance | GC=F | CME Gold Futures |
+| Hyperliquid | PAXG | DeFi Perpetual |
 
 ## Output
 
 ```
 output/
-├── reports/
-│   └── basis_analysis_report_*.pdf   # Executive summary + all charts
-├── charts/
-│   ├── gold_price_comparison.png     # CME vs Aster vs Hyperliquid
-│   ├── gold_basis_timeseries.png     # Both DeFi venues overlaid
-│   ├── gold_tradeable_basis.png      # Market hours only
-│   ├── gold_basis_distribution.png   # Histograms + stats
-│   ├── gold_volume_analysis.png      # Volume by venue
-│   ├── gold_threshold_analysis.png   # Profitability thresholds
-│   ├── venue_comparison.png          # Side-by-side metrics
-│   └── summary_table.png
-└── backtest/
-    ├── backtest_trades_*.csv          # Individual trade log
-    ├── backtest_equity_*.csv          # Daily equity curve
-    ├── backtest_summary_*.json        # Config & metrics
-    └── quantstats_tearsheet_*.html    # QuantStats report
+├── basis_arb_quantstats.html  # QuantStats tearsheet
+├── basis_arb_returns.csv      # Daily returns
+└── param_sweep_results.csv    # Parameter optimization
 ```
-
-## Data Sources
-
-| Source | Symbol | Type | API |
-|--------|--------|------|-----|
-| TradingView | GC1! | CME Futures | tvDatafeed |
-| Aster DEX | XAUUSDT | DeFi Perp | REST /klines |
-| Hyperliquid | PAXG | DeFi Perp | REST /info |
-
-## Mean Reversion Tests
-
-| Test | Aster | Hyperliquid | Meaning |
-|------|-------|-------------|---------|
-| **ADF p-value** | <0.001 | <0.001 | Stationary ✅ |
-| **Half-life** | 15 min | 35 min | Reversion speed |
-| **Hurst** | 0.13 | 0.16 | Mean-reverting ✅ |
-
-## Trading Economics
-
-### Cost Structure (~18 bps round-trip)
-- CME commission: ~0.5 bps
-- DeFi taker fee: 3.5 bps
-- Slippage: 8 bps (4 executions)
-- Funding: 5 bps/day
-
-### Position Sizing (2% volume rule)
-| Venue | Max Position | Margin Required |
-|-------|--------------|-----------------|
-| Aster | $13.5K | $2K |
-| Hyperliquid | $186K | $28K |
-
-## Backtest Results (51 days, $1M capital)
-
-| Metric | Value |
-|--------|-------|
-| Net Return | +17.5% ($175K) |
-| Annualized | 125% |
-| Sharpe Ratio | 21.64 |
-| Win Rate | 100% |
-| Total Trades | 332 |
-| Avg Trade | $527 |
-
-**Note:** 100% win rate due to simplified exit logic. Real trading will have losers.
-
-## Risks & Caveats
-
-1. **50% capture rate assumed** - backtest uses simplified exits
-2. **15-min bars** - may miss execution details
-3. **Liquidity constrains size** - monitor order books
-4. **Funding rates vary** - can spike in volatile markets
 
 ## Testing
 
 ```bash
-python -m pytest tests/ -v    # 65 tests
+python -m pytest tests/ -v
 ```
+
+## Documentation
+
+- `PLAN.md` - Project overview and results
+- `docs/STRATEGY_FRAMEWORK.md` - Framework design document
 
 ## Requirements
 
 - Python 3.10+
 - See `requirements.txt`
-
-## Documentation
-
-See `PLAN.md` for detailed project documentation including:
-- Full analysis results
-- Capital sizing calculations
-- Strategy recommendations
-- Next steps
 
 ## License
 
