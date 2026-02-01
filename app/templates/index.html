@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Strategy Lab - Home{% endblock %}
+
+{% block content %}
+<div class="text-center py-12">
+    <h1 class="text-4xl font-bold mb-4">Welcome to Strategy Lab</h1>
+    <p class="text-gray-400 mb-8">Trading strategy backtesting and data management</p>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
+        <a href="/data" class="block p-6 bg-gray-800 rounded-lg border border-gray-700 hover:border-blue-500 transition">
+            <div class="text-3xl mb-3">📁</div>
+            <h2 class="text-xl font-semibold mb-2">Data Browser</h2>
+            <p class="text-gray-400 text-sm">Download, browse, and validate market data from Binance</p>
+        </a>
+        
+        <a href="/backtest" class="block p-6 bg-gray-800 rounded-lg border border-gray-700 hover:border-blue-500 transition">
+            <div class="text-3xl mb-3">🧪</div>
+            <h2 class="text-xl font-semibold mb-2">Backtest</h2>
+            <p class="text-gray-400 text-sm">Configure and run strategy backtests</p>
+        </a>
+    </div>
+</div>
+{% endblock %}

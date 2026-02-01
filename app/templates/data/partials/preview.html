@@ -1,0 +1,119 @@
+<div>
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <h2 class="text-xl font-bold">{{ ticker }} / {{ interval }}</h2>
+            <p class="text-gray-400 text-sm">{{ venue }} {{ market }} | Years: {{ selected_years | join(', ') }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-1 bg-green-900 text-green-300 text-xs rounded">
+                {{ "%.1f" | format(report.coverage_pct) }}% coverage
+            </span>
+            {% if report.gap_count > 0 %}
+            <span class="px-2 py-1 bg-yellow-900 text-yellow-300 text-xs rounded">
+                {{ report.gap_count }} gaps
+            </span>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-4 gap-4 mb-4">
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">Bars</div>
+            <div class="text-lg font-semibold">{{ "{:,}".format(summary.bars) }}</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">Open</div>
+            <div class="text-lg font-semibold">${{ "{:,.2f}".format(summary.open_price) }}</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">Close</div>
+            <div class="text-lg font-semibold">${{ "{:,.2f}".format(summary.close_price) }}</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">Change</div>
+            <div class="text-lg font-semibold {% if summary.price_change_pct > 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                {{ "{:+.1f}".format(summary.price_change_pct) }}%
+            </div>
+        </div>
+    </div>
+    
+    <!-- Chart -->
+    <div id="price-chart" class="bg-gray-900 rounded" style="height: 400px;"></div>
+    
+    <!-- Volume Chart -->
+    <div id="volume-chart" class="bg-gray-900 rounded mt-2" style="height: 120px;"></div>
+    
+    <!-- Date Range -->
+    <div class="mt-4 text-sm text-gray-400 text-center">
+        {{ summary.start[:10] }} to {{ summary.end[:10] }}
+    </div>
+</div>
+
+<script>
+(function() {
+    const data = {{ chart_data | safe }};
+    
+    // Candlestick chart
+    const candlestick = {
+        x: data.timestamps,
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        type: 'candlestick',
+        increasing: { line: { color: '#22c55e' } },
+        decreasing: { line: { color: '#ef4444' } },
+    };
+    
+    const priceLayout = {
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        margin: { t: 10, b: 30, l: 60, r: 20 },
+        xaxis: {
+            color: '#9ca3af',
+            gridcolor: '#374151',
+            rangeslider: { visible: false },
+        },
+        yaxis: {
+            color: '#9ca3af',
+            gridcolor: '#374151',
+            side: 'right',
+        },
+        showlegend: false,
+    };
+    
+    Plotly.newPlot('price-chart', [candlestick], priceLayout, { responsive: true });
+    
+    // Volume chart
+    const colors = data.close.map((c, i) => 
+        i === 0 ? '#6b7280' : (c >= data.close[i-1] ? '#22c55e' : '#ef4444')
+    );
+    
+    const volume = {
+        x: data.timestamps,
+        y: data.volume,
+        type: 'bar',
+        marker: { color: colors, opacity: 0.7 },
+    };
+    
+    const volumeLayout = {
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        margin: { t: 5, b: 20, l: 60, r: 20 },
+        xaxis: {
+            color: '#9ca3af',
+            gridcolor: '#374151',
+        },
+        yaxis: {
+            color: '#9ca3af',
+            gridcolor: '#374151',
+            side: 'right',
+        },
+        showlegend: false,
+    };
+    
+    Plotly.newPlot('volume-chart', [volume], volumeLayout, { responsive: true });
+})();
+</script>

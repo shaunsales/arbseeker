@@ -1,0 +1,39 @@
+{% if data_tree %}
+<div class="space-y-2 text-sm">
+    {% for venue, markets in data_tree.items() %}
+    {% if markets %}
+    <div class="tree-venue">
+        <div class="font-medium text-gray-300">📁 {{ venue }}</div>
+        {% for market, tickers in markets.items() %}
+        {% if tickers %}
+        <div class="ml-4 mt-1">
+            <div class="text-gray-400">└─ {{ market }}</div>
+            {% for ticker, intervals in tickers.items() %}
+            {% if intervals %}
+            <div class="ml-4">
+                <div class="text-gray-400">└─ {{ ticker }}</div>
+                {% for interval, years in intervals.items() %}
+                <div class="ml-4">
+                    <button onclick="loadPreview('{{ venue }}', '{{ market }}', '{{ ticker }}', '{{ interval }}')"
+                            class="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
+                        └─ {{ interval }}/ 
+                        <span class="text-gray-500">[{{ years | join(', ') }}]</span>
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-gray-500 text-sm">
+    <p>No data downloaded yet.</p>
+    <p class="mt-2">Use the form above to download data.</p>
+</div>
+{% endif %}
