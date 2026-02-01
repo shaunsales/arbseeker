@@ -25,29 +25,35 @@ from core.strategy import (
 
 @dataclass
 class BasisArbConfig:
-    """Configuration for Basis Arbitrage strategy."""
+    """Configuration for Basis Arbitrage strategy.
+    
+    Basis arb locks in the spread at entry - there's no directional risk.
+    Exit is based on:
+    1. Convergence: spread narrowed (take profit)
+    2. Time: held too long (opportunity cost / funding)
+    
+    No traditional stop-loss needed - spread widening just means wait longer.
+    """
     # Entry threshold
-    threshold_bps: float = 50.0
+    threshold_bps: float = 80.0
     
-    # Exit conditions (two modes: absolute or captured)
-    # Mode 1: Absolute - exit when |basis| < take_profit_bps
-    # Mode 2: Captured - exit when we've captured take_profit_captured_bps from entry
-    use_captured_exit: bool = True  # Use captured bps mode (recommended)
-    take_profit_bps: float = 15.0   # For absolute mode
-    take_profit_captured_bps: float = 20.0  # Exit when captured this many bps
-    stop_loss_bps: float = 100.0    # Exit if basis widens by this much from entry
-    max_hold_bars: int = 10         # Maximum bars to hold (time-stop)
+    # Exit: convergence threshold (captured bps from entry)
+    take_profit_captured_bps: float = 40.0
     
-    # Stochastic exit (optional mean-reversion modeling)
-    enable_stochastic_exit: bool = False
-    half_life_bars: float = 2.3    # Expected mean-reversion half-life
-    stochastic_factor: float = 0.3  # Probability scaling factor
+    # Exit: time-based (half-life multiples)
+    half_life_bars: float = 2.3      # Mean reversion half-life (35 min / 15 min)
+    max_half_lives: float = 4.0      # Exit after this many half-lives
     
     # Trade limits
-    max_trades_per_day: int = 10
+    max_trades_per_day: int = 16
     
     # Position sizing (as fraction of capital per leg)
-    position_size_per_leg: float = 0.5  # 50% of capital per leg
+    position_size_per_leg: float = 0.5
+    
+    @property
+    def max_hold_bars(self) -> int:
+        """Maximum bars to hold based on half-life."""
+        return int(self.half_life_bars * self.max_half_lives)
 
 
 class BasisArbitrage(MultiLeggedStrategy):
@@ -100,6 +106,7 @@ class BasisArbitrage(MultiLeggedStrategy):
         # State tracking
         self.entry_basis_bps: float = 0.0
         self.entry_bar_idx: int = 0
+        self.bars_in_trade: int = 0  # Count actual trading bars held
         self.daily_trade_count: dict = {}
         self.in_position: bool = False
         
@@ -125,6 +132,7 @@ class BasisArbitrage(MultiLeggedStrategy):
         self.daily_trade_count = {}
         self.entry_basis_bps = 0.0
         self.entry_bar_idx = 0
+        self.bars_in_trade = 0
         self.in_position = False
     
     def on_bar(
@@ -158,11 +166,12 @@ class BasisArbitrage(MultiLeggedStrategy):
         
         # ===== EXIT LOGIC =====
         if self.in_position:
-            bars_held = idx - self.entry_bar_idx
-            exit_signal = self._check_exit(idx, basis_bps, abs_basis, bars_held)
+            self.bars_in_trade += 1  # Count this trading bar
+            exit_signal = self._check_exit(idx, basis_bps, abs_basis, self.bars_in_trade)
             
             if exit_signal is not None:
                 self.in_position = False
+                self.bars_in_trade = 0
                 return {
                     "tradfi": exit_signal,
                     "defi": exit_signal,
@@ -214,36 +223,25 @@ class BasisArbitrage(MultiLeggedStrategy):
         abs_basis: float,
         bars_held: int,
     ) -> Optional[Signal]:
-        """Check exit conditions and return signal if should exit."""
+        """Check exit conditions.
+        
+        Basis arb has no traditional stop-loss - spread is locked at entry.
+        Exit only on:
+        1. Convergence (captured enough bps)
+        2. Time (held too long - opportunity cost)
+        """
         cfg = self.arb_config
         entry_abs = abs(self.entry_basis_bps)
         
-        # Calculate captured bps (positive = profit, negative = loss)
+        # Calculate captured bps (how much spread has converged)
         captured_bps = entry_abs - abs_basis
         
-        # 1. Take-profit check
-        if cfg.use_captured_exit:
-            # Captured mode: exit when we've captured enough bps
-            if captured_bps >= cfg.take_profit_captured_bps:
-                return Signal.close(reason="take_profit")
-        else:
-            # Absolute mode: exit when basis drops below threshold
-            if abs_basis < cfg.take_profit_bps:
-                return Signal.close(reason="take_profit")
+        # 1. Take-profit: spread converged enough
+        if captured_bps >= cfg.take_profit_captured_bps:
+            return Signal.close(reason="take_profit")
         
-        # 2. Stop-loss: basis widened from entry
-        if captured_bps < -cfg.stop_loss_bps:
-            return Signal.close(reason="stop_loss")
-        
-        # 3. Time-stop: held too long
+        # 2. Time-based exit: held too long (opportunity cost / funding accumulation)
         if bars_held >= cfg.max_hold_bars:
-            return Signal.close(reason="time_stop")
+            return Signal.close(reason="time_expiry")
         
-        # 4. Stochastic exit (optional mean-reversion model)
-        if cfg.enable_stochastic_exit and bars_held >= cfg.half_life_bars:
-            base_prob = 1 - np.exp(-1 / cfg.half_life_bars)
-            exit_prob = base_prob * cfg.stochastic_factor
-            if self.rng.random() < exit_prob:
-                return Signal.close(reason="stochastic")
-        
-        return None  # Continue holding
+        return None  # Continue holding - spread will converge
