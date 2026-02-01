@@ -47,8 +47,8 @@ class BasisArbConfig:
     # Trade limits
     max_trades_per_day: int = 16
     
-    # Position sizing (as fraction of capital per leg)
-    position_size_per_leg: float = 0.5
+    # Position sizing (as fraction of fixed_size_amount)
+    position_size_per_leg: float = 1.0  # Use full fixed_size_amount per leg
     
     @property
     def max_hold_bars(self) -> int:
