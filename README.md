@@ -124,8 +124,7 @@ python -m pytest tests/ -v
 
 ## Documentation
 
-- `PLAN.md` - Project overview and results
-- `docs/STRATEGY_FRAMEWORK.md` - Framework design document
+- `docs/PLATFORM_OVERVIEW.md` - Framework architecture and API reference
 
 ## Requirements
 
