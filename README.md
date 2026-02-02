@@ -1,19 +1,14 @@
-# ArbSeeker
+# Backtesting Framework
 
-**Modular Backtesting Framework for TradFi-DeFi Basis Arbitrage**
+A modular Python framework for developing and backtesting trading strategies.
 
-A Python framework for developing and backtesting arbitrage strategies, with a fully optimized Gold Basis Arbitrage strategy trading CME Gold Futures vs Hyperliquid perpetuals.
+## Features
 
-## Performance (Optimized Strategy)
-
-| Metric | Value |
-|--------|-------|
-| **Annual Return** | 72% |
-| **Sharpe Ratio** | 2.14 |
-| **Win Rate** | 69% |
-| **Max Drawdown** | 1.4% |
-
-*With $500k/leg (2x leverage) on $1M capital*
+- **Single-asset strategies** - Long/short on one asset
+- **Multi-legged strategies** - Pairs, spreads, arbitrage
+- **Flexible data layer** - Parquet storage with multiple data sources
+- **Cost modeling** - Commission, slippage, funding rates
+- **Pre-computed indicators** - pandas-ta integration
 
 ## Quick Start
 
@@ -23,97 +18,60 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Run BasisArb backtest
+# Run a backtest
 PYTHONPATH=. python -c "
-from strategies.basis_arb import BasisArbitrage, BasisArbConfig
-from core.strategy import BacktestEngine, StrategyConfig, DataSpec
+from core.strategy import BacktestEngine, StrategyConfig
 from core.strategy.position import CostModel
 
-strategy = BasisArbitrage(
-    config=StrategyConfig(
-        name='BasisArb',
-        fixed_size=True,
-        fixed_size_amount=500000,
-        costs=CostModel(commission_bps=5.1, slippage_bps=4.0, funding_daily_bps=5.0),
-    ),
-    arb_config=BasisArbConfig(),
-    tradfi_spec=DataSpec('test', 'futures', 'GC', '15m'),
-    defi_spec=DataSpec('test', 'perp', 'PAXG', '15m'),
-)
-
-result = BacktestEngine().run(strategy=strategy, capital=1_000_000)
-print(f'Net P&L: \${sum(t.net_pnl for t in result.trades):,.0f}')
-print(f'Sharpe: {result.sharpe_ratio:.2f}')
+# Define your strategy (see docs/PLATFORM_OVERVIEW.md)
+# result = BacktestEngine().run(strategy=my_strategy, capital=100_000)
+# result.print_report()
 "
 ```
 
-## Framework Architecture
+## Architecture
 
 ```
 core/
 ├── data/           # Data infrastructure
-│   ├── storage.py      # Parquet I/O (yearly/monthly)
+│   ├── storage.py      # Parquet I/O (yearly/monthly files)
 │   ├── yahoo.py        # Yahoo Finance downloader
-│   ├── hyperliquid.py  # Hyperliquid API
-│   └── market_hours.py # CME hours + auto-close
+│   └── hyperliquid.py  # Hyperliquid API downloader
 ├── indicators/     # Technical indicators (pandas-ta)
 └── strategy/       # Backtesting engine
     ├── base.py         # SingleAssetStrategy, MultiLeggedStrategy
-    ├── position.py     # Position, Trade, CostModel
-    └── engine.py       # BacktestEngine
+    ├── position.py     # Position, Trade, Signal, CostModel
+    └── engine.py       # BacktestEngine, BacktestResult
 
-strategies/
-└── basis_arb.py    # BasisArbitrage(MultiLeggedStrategy)
+strategies/         # Strategy implementations
+scripts/            # Utilities (param sweeps, report generation)
 ```
 
-## BasisArb Strategy
+## Strategy Types
 
-**Entry:** `|basis| > 80 bps`
+| Type | Use Case |
+|------|----------|
+| `SingleAssetStrategy` | Trend following, mean reversion |
+| `MultiLeggedStrategy` | Pairs trading, basis arbitrage, spreads |
 
-**Exit:**
-1. Take-profit: Captured 55 bps
-2. Time-expiry: ~5 hours max hold
-3. Market-close: Auto-close 15 min before CME close
+## Data Storage
 
-**No stop-loss** - spread is locked at entry; widening just means wait longer.
+```
+data/{venue}/{market}/{ticker}/{interval}/
+├── 2024.parquet       # Yearly files
+├── 2025-01.parquet    # Monthly files
+└── ...
+```
 
-### Optimal Parameters
+## Cost Model
+
 ```python
-threshold_bps = 80.0
-take_profit_captured_bps = 55.0
-half_life_bars = 2.5
-max_half_lives = 8.0
-```
-
-## Leverage Scaling
-
-| Position/Leg | Leverage | Annual Return |
-|--------------|----------|---------------|
-| $250k | 0.5x | 36% |
-| $500k | 1.0x | 72% |
-| $1.75M | 3.5x | 203% |
-
-## Cost Model (~18 bps round-trip)
-
-- CME commission: 0.1 bps
-- DeFi taker fee: 5.0 bps
-- Slippage: 4.0 bps
-- Funding: 5.0 bps/day
-
-## Data Sources
-
-| Source | Symbol | Type |
-|--------|--------|------|
-| Yahoo Finance | GC=F | CME Gold Futures |
-| Hyperliquid | PAXG | DeFi Perpetual |
-
-## Output
-
-```
-output/
-├── basis_arb_quantstats.html  # QuantStats tearsheet
-├── basis_arb_returns.csv      # Daily returns
-└── param_sweep_results.csv    # Parameter optimization
+CostModel(
+    commission_bps=5.0,     # Per-trade commission
+    slippage_bps=2.0,       # Slippage estimate
+    funding_daily_bps=5.0,  # Daily funding rate
+    bars_per_day=24,        # For funding calculation
+)
 ```
 
 ## Testing
@@ -124,7 +82,12 @@ python -m pytest tests/ -v
 
 ## Documentation
 
-- `docs/PLATFORM_OVERVIEW.md` - Framework architecture and API reference
+See `docs/PLATFORM_OVERVIEW.md` for complete framework documentation:
+- Data layer architecture
+- Strategy base classes
+- Backtest engine flow
+- Cost calculations
+- BacktestResult metrics
 
 ## Requirements
 
