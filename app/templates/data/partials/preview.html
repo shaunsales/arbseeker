@@ -212,26 +212,23 @@ function clearFilters() {
 (function() {
     const data = {{ chart_data | safe }};
     
-    // Candlestick chart
-    const candlestick = {
+    // Price line chart (close price)
+    const priceLine = {
         x: data.timestamps,
-        open: data.open,
-        high: data.high,
-        low: data.low,
-        close: data.close,
-        type: 'candlestick',
-        increasing: { line: { color: '#22c55e' } },
-        decreasing: { line: { color: '#ef4444' } },
+        y: data.close,
+        type: 'scatter',
+        mode: 'lines',
+        line: { color: '#3b82f6', width: 1.5 },
+        name: 'Close',
     };
     
     const priceLayout = {
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        margin: { t: 10, b: 30, l: 60, r: 20 },
+        margin: { t: 10, b: 30, l: 20, r: 60 },
         xaxis: {
             color: '#9ca3af',
             gridcolor: '#374151',
-            rangeslider: { visible: false },
         },
         yaxis: {
             color: '#9ca3af',
@@ -241,7 +238,7 @@ function clearFilters() {
         showlegend: false,
     };
     
-    Plotly.newPlot('price-chart', [candlestick], priceLayout, { responsive: true });
+    Plotly.newPlot('price-chart', [priceLine], priceLayout, { responsive: true });
     
     // Volume chart
     const colors = data.close.map((c, i) => 
@@ -258,7 +255,7 @@ function clearFilters() {
     const volumeLayout = {
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
-        margin: { t: 5, b: 20, l: 60, r: 20 },
+        margin: { t: 5, b: 20, l: 20, r: 60 },
         xaxis: {
             color: '#9ca3af',
             gridcolor: '#374151',

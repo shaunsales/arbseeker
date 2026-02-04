@@ -15,8 +15,9 @@ from pydantic import BaseModel
 import pandas as pd
 import io
 
-from core.data.storage import list_all_data, load_ohlcv, list_available_years, list_available_periods, delete_year, clear_all_data, get_data_path
+from core.data.storage import list_all_data, load_ohlcv, list_available_years, list_available_periods, delete_period, clear_all_data, get_data_path
 from core.data.binance import download_binance_year, list_binance_symbols, INTERVALS
+from core.data.hyperliquid import download_hyperliquid_range
 from core.data.validator import validate_ohlcv, get_data_summary
 
 router = APIRouter()
@@ -32,7 +33,9 @@ class DownloadRequest(BaseModel):
     market: str = "futures"
     ticker: str
     interval: str
-    year: int
+    year: Optional[int] = None  # For Binance
+    start_month: Optional[str] = None  # For Hyperliquid (YYYY-MM)
+    end_month: Optional[str] = None  # For Hyperliquid (YYYY-MM)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -153,7 +156,11 @@ async def data_preview(
 @router.post("/download")
 async def download_data(request: DownloadRequest, background_tasks: BackgroundTasks):
     """Start a data download job."""
-    job_id = f"{request.ticker}_{request.interval}_{request.year}"
+    # Generate job ID based on venue
+    if request.venue == "binance":
+        job_id = f"binance_{request.ticker}_{request.interval}_{request.year}"
+    else:
+        job_id = f"hyperliquid_{request.ticker}_{request.interval}_{request.start_month}_{request.end_month}"
     
     # Check if already downloading
     if job_id in download_jobs and download_jobs[job_id]["status"] == "running":
@@ -167,14 +174,24 @@ async def download_data(request: DownloadRequest, background_tasks: BackgroundTa
     }
     
     # Start background download
-    background_tasks.add_task(
-        _download_task,
-        job_id,
-        request.ticker,
-        request.interval,
-        request.year,
-        request.market,
-    )
+    if request.venue == "binance":
+        background_tasks.add_task(
+            _download_binance_task,
+            job_id,
+            request.ticker,
+            request.interval,
+            request.year,
+            request.market,
+        )
+    else:
+        background_tasks.add_task(
+            _download_hyperliquid_task,
+            job_id,
+            request.ticker,
+            request.interval,
+            request.start_month,
+            request.end_month,
+        )
     
     return {"job_id": job_id, "status": "started"}
 
@@ -187,10 +204,10 @@ async def download_status(job_id: str):
     return download_jobs[job_id]
 
 
-@router.delete("/{venue}/{market}/{ticker}/{interval}/{year}")
-async def delete_data(venue: str, market: str, ticker: str, interval: str, year: int):
-    """Delete a specific year's data."""
-    deleted = delete_year(venue, market, ticker, interval, year)
+@router.delete("/{venue}/{market}/{ticker}/{interval}/{period}")
+async def delete_data(venue: str, market: str, ticker: str, interval: str, period: str):
+    """Delete a specific period's data."""
+    deleted = delete_period(venue, market, ticker, interval, period)
     return {"deleted": deleted}
 
 
@@ -201,8 +218,8 @@ async def get_symbols(market: str = "futures"):
     return {"symbols": symbols}
 
 
-async def _download_task(job_id: str, ticker: str, interval: str, year: int, market: str):
-    """Background task for downloading data."""
+async def _download_binance_task(job_id: str, ticker: str, interval: str, year: int, market: str):
+    """Background task for downloading Binance data."""
     def progress_callback(month: int, total: int, message: str):
         download_jobs[job_id] = {
             "status": "running",
@@ -224,6 +241,38 @@ async def _download_task(job_id: str, ticker: str, interval: str, year: int, mar
             "progress": 100,
             "message": f"Saved to {path}" if path else "No data available",
             "path": str(path) if path else None,
+        }
+    except Exception as e:
+        download_jobs[job_id] = {
+            "status": "error",
+            "progress": 0,
+            "message": str(e),
+        }
+
+
+async def _download_hyperliquid_task(job_id: str, ticker: str, interval: str, start_month: str, end_month: str):
+    """Background task for downloading Hyperliquid data."""
+    def progress_callback(current: int, total: int, message: str):
+        download_jobs[job_id] = {
+            "status": "running",
+            "progress": int((current / total) * 100),
+            "message": message,
+        }
+    
+    try:
+        paths = download_hyperliquid_range(
+            symbol=ticker,
+            interval=interval,
+            start_period=start_month,
+            end_period=end_month,
+            progress_callback=progress_callback,
+        )
+        
+        download_jobs[job_id] = {
+            "status": "complete",
+            "progress": 100,
+            "message": f"Downloaded {len(paths)} months" if paths else "No data available",
+            "paths": [str(p) for p in paths] if paths else None,
         }
     except Exception as e:
         download_jobs[job_id] = {
