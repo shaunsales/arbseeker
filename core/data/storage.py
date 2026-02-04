@@ -11,6 +11,22 @@ Supported period formats:
 Examples:
     data/binance/futures/BTCUSDT/1h/2024.parquet
     data/hyperliquid/perp/PAXG/15m/2025-10.parquet
+
+Standard OHLCV Schema:
+    Required columns:
+        - timestamp (DatetimeIndex, UTC) - bar open time, aligned to within 1 second
+        - open, high, low, close (float64) - OHLC prices
+        - volume (float64) - trading volume in base currency
+
+    Optional columns:
+        - market_open (bool) - True if market is open at this bar
+        - quote_volume (float64) - volume in quote currency
+        - count (int) - number of trades in bar
+        - taker_buy_volume (float64) - taker buy volume
+
+    Computed at runtime (NOT stored):
+        - near_close - compute from market_open transitions
+        - mid - compute as (high + low) / 2 or (bid + ask) / 2
 """
 
 import re

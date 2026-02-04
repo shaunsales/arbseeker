@@ -18,6 +18,7 @@ import pandas as pd
 
 from core.data.storage import save_yearly, get_data_path, list_available_years
 from core.data.validator import validate_ohlcv, fill_gaps
+from core.data.market_hours import add_market_open_always
 
 # Binance Vision base URL
 BASE_URL = "https://data.binance.vision"
@@ -123,6 +124,9 @@ def download_month(
     
     # Keep only OHLCV columns + useful extras
     df = df[["open", "high", "low", "close", "volume", "quote_volume", "count", "taker_buy_volume", "taker_buy_quote_volume"]]
+    
+    # Add market_open (crypto is 24/7, always open)
+    df = add_market_open_always(df, "market_open")
     
     return df
 

@@ -18,7 +18,7 @@ See `README.md` for quick start and `docs/PLATFORM_OVERVIEW.md` for architecture
 
 ## Phase 1: Data Layer Standardization
 
-### 1.1 Standardize Raw OHLCV Schema
+### 1.1 Standardize Raw OHLCV Schema ✅
 ```
 Columns (required):
 - timestamp (DatetimeIndex, UTC) - bar open time, aligned to within 1 second
@@ -30,9 +30,9 @@ Columns (optional):
 - trades (int) - number of trades in bar
 - quote_volume (float64) - volume in quote currency
 
-Remove:
-- near_close flag (compute at runtime from market hours)
-- mid (compute at runtime)
+Computed at runtime (NOT stored):
+- near_close - compute from market_open transitions
+- mid - compute as (high + low) / 2
 ```
 
 ### 1.2 Enhance Web App Data Browser
@@ -41,10 +41,11 @@ Remove:
 - [ ] Show data quality metrics (gaps, coverage %)
 - [ ] Downloadable CSV/Parquet export button
 
-### 1.3 Update Downloaders
-- [ ] Standardize output format across all downloaders (yahoo, hyperliquid, binance)
-- [ ] Remove `near_close` computation
-- [ ] Align all timestamps to UTC bar open time (within 1 second tolerance)
+### 1.3 Update Downloaders ✅
+- [x] Standardize output format across all downloaders (yahoo, hyperliquid, binance)
+- [x] Remove `near_close` computation from Yahoo
+- [x] Add `market_open` to Binance (24/7 = always True)
+- [x] All timestamps aligned to UTC bar open time
 
 ---
 

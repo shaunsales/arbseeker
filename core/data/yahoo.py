@@ -16,7 +16,7 @@ import yfinance as yf
 
 from core.data.storage import save_monthly, save_ohlcv, get_data_path, list_available_periods
 from core.data.validator import validate_ohlcv, fill_gaps
-from core.data.market_hours import add_market_open_from_volume, detect_near_close, get_interval_minutes
+from core.data.market_hours import add_market_open_from_volume
 
 
 # Yahoo Finance limitations by interval
@@ -92,10 +92,6 @@ def download_yahoo_month(
     
     # Add market_open based on volume (volume > 0 means market was open)
     df = add_market_open_from_volume(df, "volume", "market_open")
-    
-    # Add near_close flag (30 min before market closes)
-    interval_mins = get_interval_minutes(interval)
-    df = detect_near_close(df, "market_open", buffer_minutes=30, interval_minutes=interval_mins)
     
     return df
 
