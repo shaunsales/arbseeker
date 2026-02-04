@@ -35,11 +35,12 @@ Computed at runtime (NOT stored):
 - mid - compute as (high + low) / 2
 ```
 
-### 1.2 Enhance Web App Data Browser
-- [ ] Add pagination controls (page size: 100/500/1000 rows)
-- [ ] Add date range filter
-- [ ] Show data quality metrics (gaps, coverage %)
-- [ ] Downloadable CSV/Parquet export button
+### 1.2 Enhance Web App Data Browser ✅
+- [x] Add pagination controls (page size: 100/500/1000 rows)
+- [x] Add date range filter (start/end date pickers)
+- [x] Show data quality metrics (gaps, coverage %, bar count)
+- [x] Downloadable CSV/Parquet export buttons
+- [x] Chart/Table tabs with paginated data table
 
 ### 1.3 Update Downloaders ✅
 - [x] Standardize output format across all downloaders (yahoo, hyperliquid, binance)

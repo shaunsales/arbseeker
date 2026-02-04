@@ -3,7 +3,7 @@
     <div class="flex items-center justify-between mb-4">
         <div>
             <h2 class="text-xl font-bold">{{ ticker }} / {{ interval }}</h2>
-            <p class="text-gray-400 text-sm">{{ venue }} {{ market }} | Years: {{ selected_years | join(', ') }}</p>
+            <p class="text-gray-400 text-sm">{{ venue }} {{ market }} | Periods: {{ selected_periods | length }}</p>
         </div>
         <div class="flex items-center gap-2">
             <span class="px-2 py-1 bg-green-900 text-green-300 text-xs rounded">
@@ -14,6 +14,42 @@
                 {{ report.gap_count }} gaps
             </span>
             {% endif %}
+            <span class="px-2 py-1 bg-blue-900 text-blue-300 text-xs rounded">
+                {{ "{:,}".format(pagination.total_rows) }} bars
+            </span>
+        </div>
+    </div>
+    
+    <!-- Filters Row -->
+    <div class="flex items-center gap-4 mb-4 p-3 bg-gray-700 rounded">
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-400">From:</label>
+            <input type="date" id="filter-start" value="{{ date_range.start }}" 
+                   min="{{ date_range.min }}" max="{{ date_range.max }}"
+                   class="bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm">
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-400">To:</label>
+            <input type="date" id="filter-end" value="{{ date_range.end }}"
+                   min="{{ date_range.min }}" max="{{ date_range.max }}"
+                   class="bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm">
+        </div>
+        <button onclick="applyFilters()" class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
+            Apply
+        </button>
+        <button onclick="clearFilters()" class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
+            Clear
+        </button>
+        <div class="flex-1"></div>
+        <div class="flex items-center gap-2">
+            <a href="/data/export/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}?format=csv{% if date_range.start %}&start_date={{ date_range.start }}{% endif %}{% if date_range.end %}&end_date={{ date_range.end }}{% endif %}" 
+               class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">
+                CSV
+            </a>
+            <a href="/data/export/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}?format=parquet{% if date_range.start %}&start_date={{ date_range.start }}{% endif %}{% if date_range.end %}&end_date={{ date_range.end }}{% endif %}"
+               class="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm">
+                Parquet
+            </a>
         </div>
     </div>
     
@@ -39,19 +75,140 @@
         </div>
     </div>
     
-    <!-- Chart -->
-    <div id="price-chart" class="bg-gray-900 rounded" style="height: 400px;"></div>
+    <!-- Tabs: Chart / Table -->
+    <div class="flex border-b border-gray-600 mb-4">
+        <button id="tab-chart" onclick="showTab('chart')" class="px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-400">
+            Chart
+        </button>
+        <button id="tab-table" onclick="showTab('table')" class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+            Table
+        </button>
+    </div>
     
-    <!-- Volume Chart -->
-    <div id="volume-chart" class="bg-gray-900 rounded mt-2" style="height: 120px;"></div>
+    <!-- Chart View -->
+    <div id="view-chart">
+        <div id="price-chart" class="bg-gray-900 rounded" style="height: 400px;"></div>
+        <div id="volume-chart" class="bg-gray-900 rounded mt-2" style="height: 120px;"></div>
+        <div class="mt-4 text-sm text-gray-400 text-center">
+            {{ summary.start[:10] }} to {{ summary.end[:10] }}
+        </div>
+    </div>
     
-    <!-- Date Range -->
-    <div class="mt-4 text-sm text-gray-400 text-center">
-        {{ summary.start[:10] }} to {{ summary.end[:10] }}
+    <!-- Table View -->
+    <div id="view-table" class="hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="px-3 py-2 text-left">Timestamp</th>
+                        <th class="px-3 py-2 text-right">Open</th>
+                        <th class="px-3 py-2 text-right">High</th>
+                        <th class="px-3 py-2 text-right">Low</th>
+                        <th class="px-3 py-2 text-right">Close</th>
+                        <th class="px-3 py-2 text-right">Volume</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for row in table_data %}
+                    <tr class="hover:bg-gray-700">
+                        <td class="px-3 py-2 font-mono text-gray-300">{{ row.timestamp }}</td>
+                        <td class="px-3 py-2 text-right">{{ row.open }}</td>
+                        <td class="px-3 py-2 text-right">{{ row.high }}</td>
+                        <td class="px-3 py-2 text-right">{{ row.low }}</td>
+                        <td class="px-3 py-2 text-right">{{ row.close }}</td>
+                        <td class="px-3 py-2 text-right text-gray-400">{{ row.volume }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div class="flex items-center justify-between mt-4 px-2">
+            <div class="text-sm text-gray-400">
+                Showing {{ (pagination.page - 1) * pagination.page_size + 1 }} - {{ [pagination.page * pagination.page_size, pagination.total_rows] | min }} of {{ "{:,}".format(pagination.total_rows) }}
+            </div>
+            <div class="flex items-center gap-2">
+                <select id="page-size" onchange="changePageSize(this.value)" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                    <option value="100" {% if pagination.page_size == 100 %}selected{% endif %}>100</option>
+                    <option value="500" {% if pagination.page_size == 500 %}selected{% endif %}>500</option>
+                    <option value="1000" {% if pagination.page_size == 1000 %}selected{% endif %}>1000</option>
+                </select>
+                <button onclick="goToPage(1)" {% if pagination.page == 1 %}disabled{% endif %}
+                        class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">«</button>
+                <button onclick="goToPage({{ pagination.page - 1 }})" {% if pagination.page == 1 %}disabled{% endif %}
+                        class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">‹</button>
+                <span class="px-3 text-sm">{{ pagination.page }} / {{ pagination.total_pages }}</span>
+                <button onclick="goToPage({{ pagination.page + 1 }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
+                        class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">›</button>
+                <button onclick="goToPage({{ pagination.total_pages }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
+                        class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">»</button>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
+// Current state
+const previewState = {
+    venue: '{{ venue }}',
+    market: '{{ market }}',
+    ticker: '{{ ticker }}',
+    interval: '{{ interval }}',
+    page: {{ pagination.page }},
+    pageSize: {{ pagination.page_size }},
+    startDate: '{{ date_range.start }}',
+    endDate: '{{ date_range.end }}',
+};
+
+function showTab(tab) {
+    document.getElementById('view-chart').classList.toggle('hidden', tab !== 'chart');
+    document.getElementById('view-table').classList.toggle('hidden', tab !== 'table');
+    document.getElementById('tab-chart').classList.toggle('border-blue-500', tab === 'chart');
+    document.getElementById('tab-chart').classList.toggle('text-blue-400', tab === 'chart');
+    document.getElementById('tab-chart').classList.toggle('border-transparent', tab !== 'chart');
+    document.getElementById('tab-chart').classList.toggle('text-gray-400', tab !== 'chart');
+    document.getElementById('tab-table').classList.toggle('border-blue-500', tab === 'table');
+    document.getElementById('tab-table').classList.toggle('text-blue-400', tab === 'table');
+    document.getElementById('tab-table').classList.toggle('border-transparent', tab !== 'table');
+    document.getElementById('tab-table').classList.toggle('text-gray-400', tab !== 'table');
+}
+
+function buildUrl(page, pageSize, startDate, endDate) {
+    let url = `/data/preview/${previewState.venue}/${previewState.market}/${previewState.ticker}/${previewState.interval}`;
+    const params = new URLSearchParams();
+    if (page > 1) params.set('page', page);
+    if (pageSize !== 100) params.set('page_size', pageSize);
+    if (startDate) params.set('start_date', startDate);
+    if (endDate) params.set('end_date', endDate);
+    if (params.toString()) url += '?' + params.toString();
+    return url;
+}
+
+function goToPage(page) {
+    const url = buildUrl(page, previewState.pageSize, previewState.startDate, previewState.endDate);
+    htmx.ajax('GET', url, '#data-preview');
+}
+
+function changePageSize(size) {
+    const url = buildUrl(1, parseInt(size), previewState.startDate, previewState.endDate);
+    htmx.ajax('GET', url, '#data-preview');
+}
+
+function applyFilters() {
+    const startDate = document.getElementById('filter-start').value;
+    const endDate = document.getElementById('filter-end').value;
+    const url = buildUrl(1, previewState.pageSize, startDate, endDate);
+    htmx.ajax('GET', url, '#data-preview');
+}
+
+function clearFilters() {
+    document.getElementById('filter-start').value = '';
+    document.getElementById('filter-end').value = '';
+    const url = buildUrl(1, previewState.pageSize, '', '');
+    htmx.ajax('GET', url, '#data-preview');
+}
+
 (function() {
     const data = {{ chart_data | safe }};
     

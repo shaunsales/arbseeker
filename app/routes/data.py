@@ -5,14 +5,17 @@ Handles browsing, downloading, and previewing market data.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+import pandas as pd
+import io
 
-from core.data.storage import list_all_data, load_ohlcv, list_available_years, delete_year, clear_all_data
+from core.data.storage import list_all_data, load_ohlcv, list_available_years, list_available_periods, delete_year, clear_all_data, get_data_path
 from core.data.binance import download_binance_year, list_binance_symbols, INTERVALS
 from core.data.validator import validate_ohlcv, get_data_summary
 
@@ -60,34 +63,65 @@ async def data_preview(
     market: str,
     ticker: str,
     interval: str,
-    years: Optional[str] = None,
+    periods: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
 ):
-    """Preview data with chart and stats."""
+    """Preview data with chart, stats, pagination, and date filters."""
     try:
-        available_years = list_available_years(venue, market, ticker, interval)
+        available_periods = list_available_periods(venue, market, ticker, interval)
         
-        if not available_years:
+        if not available_periods:
             return templates.TemplateResponse("data/partials/no_data.html", {
                 "request": request,
                 "ticker": ticker,
                 "interval": interval,
             })
         
-        # Parse years parameter or use all
-        if years:
-            selected_years = [int(y) for y in years.split(",")]
+        # Parse periods parameter or use all
+        if periods:
+            selected_periods = periods.split(",")
         else:
-            selected_years = available_years
+            selected_periods = available_periods
         
         # Load data
-        df = load_ohlcv(venue, market, ticker, interval, years=selected_years)
+        df = load_ohlcv(venue, market, ticker, interval, periods=selected_periods)
         
-        # Get stats
+        # Apply date filters if provided
+        if start_date:
+            start_dt = pd.to_datetime(start_date).tz_localize("UTC")
+            df = df[df.index >= start_dt]
+        if end_date:
+            end_dt = pd.to_datetime(end_date).tz_localize("UTC")
+            df = df[df.index <= end_dt]
+        
+        # Get stats (on filtered data)
         summary = get_data_summary(df)
         report = validate_ohlcv(df, interval)
         
+        # Pagination for table
+        total_rows = len(df)
+        total_pages = max(1, (total_rows + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        table_df = df.iloc[start_idx:end_idx]
+        
+        # Prepare table data
+        table_data = _prepare_table_data(table_df)
+        
         # Generate chart data (sampled for performance)
         chart_data = _prepare_chart_data(df, max_points=2000)
+        
+        # Date range for filters
+        date_range = {
+            "min": df.index.min().strftime("%Y-%m-%d") if len(df) > 0 else "",
+            "max": df.index.max().strftime("%Y-%m-%d") if len(df) > 0 else "",
+            "start": start_date or "",
+            "end": end_date or "",
+        }
         
         return templates.TemplateResponse("data/partials/preview.html", {
             "request": request,
@@ -95,11 +129,19 @@ async def data_preview(
             "market": market,
             "ticker": ticker,
             "interval": interval,
-            "available_years": available_years,
-            "selected_years": selected_years,
+            "available_periods": available_periods,
+            "selected_periods": selected_periods,
             "summary": summary,
             "report": report,
             "chart_data": json.dumps(chart_data),
+            "table_data": table_data,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_rows": total_rows,
+                "total_pages": total_pages,
+            },
+            "date_range": date_range,
         })
     except Exception as e:
         return templates.TemplateResponse("data/partials/error.html", {
@@ -191,8 +233,70 @@ async def _download_task(job_id: str, ticker: str, interval: str, year: int, mar
         }
 
 
+@router.get("/export/{venue}/{market}/{ticker}/{interval}")
+async def export_data(
+    venue: str,
+    market: str,
+    ticker: str,
+    interval: str,
+    format: str = "csv",
+    periods: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """Export data as CSV or Parquet."""
+    try:
+        available_periods = list_available_periods(venue, market, ticker, interval)
+        
+        if not available_periods:
+            raise HTTPException(status_code=404, detail="No data found")
+        
+        # Parse periods or use all
+        if periods:
+            selected_periods = periods.split(",")
+        else:
+            selected_periods = available_periods
+        
+        # Load data
+        df = load_ohlcv(venue, market, ticker, interval, periods=selected_periods)
+        
+        # Apply date filters
+        if start_date:
+            start_dt = pd.to_datetime(start_date).tz_localize("UTC")
+            df = df[df.index >= start_dt]
+        if end_date:
+            end_dt = pd.to_datetime(end_date).tz_localize("UTC")
+            df = df[df.index <= end_dt]
+        
+        filename = f"{ticker}_{interval}_{datetime.now().strftime('%Y%m%d')}"
+        
+        if format == "parquet":
+            buffer = io.BytesIO()
+            df.to_parquet(buffer, engine="pyarrow")
+            buffer.seek(0)
+            return StreamingResponse(
+                buffer,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f"attachment; filename={filename}.parquet"}
+            )
+        else:  # CSV
+            buffer = io.StringIO()
+            df.to_csv(buffer)
+            buffer.seek(0)
+            return StreamingResponse(
+                iter([buffer.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={filename}.csv"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def _prepare_chart_data(df, max_points: int = 2000) -> dict:
     """Prepare OHLCV data for Plotly chart."""
+    if len(df) == 0:
+        return {"timestamps": [], "open": [], "high": [], "low": [], "close": [], "volume": []}
+    
     # Sample if too many points
     if len(df) > max_points:
         step = len(df) // max_points
@@ -206,3 +310,21 @@ def _prepare_chart_data(df, max_points: int = 2000) -> dict:
         "close": df["close"].tolist(),
         "volume": df["volume"].tolist(),
     }
+
+
+def _prepare_table_data(df) -> list[dict]:
+    """Prepare OHLCV data for table display."""
+    if len(df) == 0:
+        return []
+    
+    records = []
+    for ts, row in df.iterrows():
+        records.append({
+            "timestamp": ts.strftime("%Y-%m-%d %H:%M"),
+            "open": f"{row['open']:.2f}",
+            "high": f"{row['high']:.2f}",
+            "low": f"{row['low']:.2f}",
+            "close": f"{row['close']:.2f}",
+            "volume": f"{row['volume']:,.0f}",
+        })
+    return records
