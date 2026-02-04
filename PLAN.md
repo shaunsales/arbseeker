@@ -12,7 +12,7 @@ See `README.md` for quick start and `docs/PLATFORM_OVERVIEW.md` for architecture
 - [x] BasisArbitrage strategy with parameter optimization
 - [x] HTML report generator (`scripts/generate_basis_report.py`)
 - [x] Hyperliquid S3 trade downloader (`scripts/download_hl_trades.py`)
-- [x] Remove legacy files (1_data_acquisition.py, 1_generate_reports.py, etc.)
+- [x] Remove legacy files (1_data_acquisition.py, 1_generate_reports.py, 2_basis_analysis.py, 3_visualization.py, 4_backtest.py, validate_basis.py, test_connections.py)
 
 ---
 
