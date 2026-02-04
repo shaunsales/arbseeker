@@ -17,6 +17,7 @@ import numpy as np
 from core.data.storage import load_ohlcv
 from core.indicators import compute_indicators
 from core.strategy.base import SingleAssetStrategy, MultiLeggedStrategy, DataSpec
+from core.strategy.basis_strategy import BasisStrategy, BasisPosition, BasisSignal
 from core.strategy.position import (
     Position, Trade, Signal, CostModel, Side, PositionStatus,
     DEFAULT_COSTS,
@@ -192,7 +193,9 @@ class BacktestEngine:
         """
         costs = costs or DEFAULT_COSTS
         
-        if isinstance(strategy, SingleAssetStrategy):
+        if isinstance(strategy, BasisStrategy):
+            return self._run_basis(strategy, capital, costs)
+        elif isinstance(strategy, SingleAssetStrategy):
             return self._run_single_asset(
                 strategy, data, capital, costs,
                 venue, market, ticker, interval, years
@@ -541,6 +544,174 @@ class BacktestEngine:
         result.trades = trades
         result.final_capital = current_capital
         result.equity_curve = pd.Series(equity_curve, index=common_index)
+        result.compute_metrics()
+        
+        return result
+    
+    def _run_basis(
+        self,
+        strategy: BasisStrategy,
+        capital: float,
+        costs: CostModel,
+    ) -> BacktestResult:
+        """Run backtest for basis strategy using pre-computed basis files."""
+        
+        # Load basis data
+        data = strategy.load_data()
+        if self.verbose:
+            print(f"Loaded {len(data):,} bars from basis file")
+            print(f"Quote venue: {strategy.quote_venue}")
+        
+        # Compute additional indicators if needed
+        indicators = strategy.required_indicators()
+        if indicators:
+            data = compute_indicators(data, indicators)
+            if self.verbose:
+                print(f"Computed {len(indicators)} indicator(s)")
+        
+        # Initialize result
+        result = BacktestResult(
+            strategy_name=strategy.name,
+            config={
+                "capital": capital,
+                "costs": costs.__dict__,
+                "base_ticker": strategy.config.base_ticker,
+                "quote_venue": strategy.quote_venue,
+            },
+            start_time=data.index[0],
+            end_time=data.index[-1],
+            total_bars=len(data),
+            initial_capital=capital,
+        )
+        
+        # Initialize state
+        current_capital = capital
+        position: Optional[BasisPosition] = None
+        trades: list[Trade] = []
+        equity_curve = []
+        
+        # Call strategy start hook
+        strategy.on_start(data)
+        
+        # Main backtest loop
+        for idx in range(len(data)):
+            timestamp = data.index[idx]
+            base_price = data["base_price"].iloc[idx]
+            quote_price = data[f"{strategy.quote_venue}_price"].iloc[idx]
+            basis_bps = data[f"{strategy.quote_venue}_basis_bps"].iloc[idx]
+            
+            # Skip if data quality is not ok
+            data_quality = data["data_quality"].iloc[idx]
+            if data_quality != "ok" and position is None:
+                equity_curve.append(current_capital)
+                continue
+            
+            # Get signal from strategy
+            signal = strategy.on_bar(idx, data, current_capital, position)
+            
+            # Process signal
+            if signal.action == "open_long" and position is None:
+                size = current_capital * signal.size * strategy.config.position_size
+                position = BasisPosition(
+                    direction=1,
+                    entry_bar=idx,
+                    entry_basis_bps=basis_bps,
+                    entry_base_price=base_price,
+                    entry_quote_price=quote_price,
+                    size=size,
+                    reason=signal.reason,
+                )
+                if self.verbose:
+                    print(f"[{timestamp}] OPEN LONG @ {basis_bps:.0f} bps, size=${size:,.0f}")
+                    
+            elif signal.action == "open_short" and position is None:
+                size = current_capital * signal.size * strategy.config.position_size
+                position = BasisPosition(
+                    direction=-1,
+                    entry_bar=idx,
+                    entry_basis_bps=basis_bps,
+                    entry_base_price=base_price,
+                    entry_quote_price=quote_price,
+                    size=size,
+                    reason=signal.reason,
+                )
+                if self.verbose:
+                    print(f"[{timestamp}] OPEN SHORT @ {basis_bps:.0f} bps, size=${size:,.0f}")
+                    
+            elif signal.action == "close" and position is not None:
+                # Calculate P&L from basis convergence
+                gross_pnl = position.unrealized_pnl(basis_bps)
+                bars_held = position.bars_held(idx)
+                trade_costs = costs.total_cost(position.size, bars_held)
+                net_pnl = gross_pnl - trade_costs
+                
+                # Create trade record
+                trade = Trade(
+                    symbol=f"{strategy.config.base_ticker}/{strategy.quote_venue}",
+                    side=Side.LONG if position.direction == 1 else Side.SHORT,
+                    entry_time=data.index[position.entry_bar],
+                    entry_price=position.entry_basis_bps,
+                    exit_time=timestamp,
+                    exit_price=basis_bps,
+                    size=position.size,
+                    gross_pnl=gross_pnl,
+                    costs=trade_costs,
+                    net_pnl=net_pnl,
+                    bars_held=bars_held,
+                    entry_reason=position.reason,
+                    exit_reason=signal.reason,
+                )
+                
+                current_capital += net_pnl
+                trades.append(trade)
+                
+                if self.verbose:
+                    print(f"[{timestamp}] CLOSE @ {basis_bps:.0f} bps, P&L=${net_pnl:,.0f} ({bars_held} bars)")
+                
+                position = None
+            
+            # Record equity
+            equity = current_capital
+            if position:
+                equity += position.unrealized_pnl(basis_bps)
+            equity_curve.append(equity)
+        
+        # Close any open position at end
+        if position:
+            idx = len(data) - 1
+            basis_bps = data[f"{strategy.quote_venue}_basis_bps"].iloc[-1]
+            gross_pnl = position.unrealized_pnl(basis_bps)
+            bars_held = position.bars_held(idx)
+            trade_costs = costs.total_cost(position.size, bars_held)
+            net_pnl = gross_pnl - trade_costs
+            
+            trade = Trade(
+                symbol=f"{strategy.config.base_ticker}/{strategy.quote_venue}",
+                side=Side.LONG if position.direction == 1 else Side.SHORT,
+                entry_time=data.index[position.entry_bar],
+                entry_price=position.entry_basis_bps,
+                exit_time=data.index[-1],
+                exit_price=basis_bps,
+                size=position.size,
+                gross_pnl=gross_pnl,
+                costs=trade_costs,
+                net_pnl=net_pnl,
+                bars_held=bars_held,
+                entry_reason=position.reason,
+                exit_reason="end_of_data",
+            )
+            
+            current_capital += net_pnl
+            trades.append(trade)
+            equity_curve[-1] = current_capital
+        
+        # Call strategy end hook
+        strategy.on_end(data)
+        
+        # Build result
+        result.trades = trades
+        result.final_capital = current_capital
+        result.equity_curve = pd.Series(equity_curve, index=data.index)
         result.compute_metrics()
         
         return result
