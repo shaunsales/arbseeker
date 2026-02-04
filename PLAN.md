@@ -72,14 +72,14 @@ New module: `core/data/basis.py` with `create_basis_file()` function.
 - Flexible period loading (handles yearly vs monthly format mismatches)
 - `load_basis()` and `list_basis_files()` utilities
 
-### 2.3 Web App Basis Builder UI
-- [ ] Select base venue/ticker
-- [ ] Add one or more quote venues/tickers
-- [ ] Choose time periods
-- [ ] Preview aligned data with basis chart
-- [ ] Create & save basis file
+### 2.3 Web App Basis Builder UI ✅
+- [x] Select base venue/ticker
+- [x] Add one or more quote venues/tickers
+- [x] Auto-detect overlapping periods
+- [x] Preview aligned data with basis chart
+- [x] Create & save basis file
 
-### 2.4 Strategy Split
+### 2.4 BasisStrategy Class
 - **MultiLeggedStrategy** - unchanged, supports any multi-leg trades
 - **BasisStrategy** - new class for pre-computed basis files, same indicator pattern
 
@@ -122,10 +122,10 @@ Bar-by-bar output: `output/backtests/{strategy_name}_{timestamp}.parquet`
 | Phase | Deliverable |
 |-------|-------------|
 | 0 | ✅ Delete legacy files, update PLAN.md |
-| 1.1 | Standardize OHLCV schema |
-| 1.2 | Web app pagination + filters |
-| 2.1-2.2 | Basis file schema + builder |
-| 2.3 | BasisStrategy class |
-| 2.4 | Web app basis builder UI |
+| 1.1 | ✅ Standardize OHLCV schema |
+| 1.2 | ✅ Web app pagination + filters + TradingView charts |
+| 2.1-2.2 | ✅ Basis file schema + builder |
+| 2.3 | ✅ Web app basis builder UI |
+| 2.4 | BasisStrategy class |
 | 3.1-3.4 | Backtest output schema + engine updates |
 | 4.x | Performance dashboard (iterative) |
