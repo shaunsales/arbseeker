@@ -79,9 +79,13 @@ New module: `core/data/basis.py` with `create_basis_file()` function.
 - [x] Preview aligned data with basis chart
 - [x] Create & save basis file
 
-### 2.4 BasisStrategy Class
+### 2.4 BasisStrategy Class ✅
 - **MultiLeggedStrategy** - unchanged, supports any multi-leg trades
-- **BasisStrategy** - new class for pre-computed basis files, same indicator pattern
+- **BasisStrategy** - new class for pre-computed basis files
+  - `BasisPosition` tracks spread positions (direction, entry basis, size)
+  - `BasisSignal` for open_long/open_short/close/hold actions
+  - `SimpleBasisMeanReversion` example strategy included
+  - `BacktestEngine._run_basis()` for running basis backtests
 
 ---
 
@@ -126,6 +130,6 @@ Bar-by-bar output: `output/backtests/{strategy_name}_{timestamp}.parquet`
 | 1.2 | ✅ Web app pagination + filters + TradingView charts |
 | 2.1-2.2 | ✅ Basis file schema + builder |
 | 2.3 | ✅ Web app basis builder UI |
-| 2.4 | BasisStrategy class |
+| 2.4 | ✅ BasisStrategy class |
 | 3.1-3.4 | Backtest output schema + engine updates |
 | 4.x | Performance dashboard (iterative) |
