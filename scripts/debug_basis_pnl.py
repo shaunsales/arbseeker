@@ -4,8 +4,8 @@ import pandas as pd
 import numpy as np
 
 # Load data
-tradfi = pd.read_parquet('data/test/futures/GC/15m/2025-12.parquet')
-defi = pd.read_parquet('data/test/perp/PAXG/15m/2025-12.parquet')
+tradfi = pd.read_parquet('tests/fixtures/futures/GC/15m/2025-12.parquet')
+defi = pd.read_parquet('tests/fixtures/perp/PAXG/15m/2025-12.parquet')
 common = tradfi.index.intersection(defi.index)
 tradfi = tradfi.loc[common]
 defi = defi.loc[common]
