@@ -259,7 +259,7 @@ def list_all_data() -> dict:
     List all available data in the data directory.
     
     Returns:
-        Nested dict: {venue: {market: {ticker: {interval: [years]}}}}
+        Nested dict: {venue: {market: {ticker: {interval: [periods]}}}}
     """
     result = {}
     
@@ -289,16 +289,13 @@ def list_all_data() -> dict:
                         continue
                     interval = interval_path.name
                     
-                    years = []
+                    periods = []
                     for file_path in interval_path.glob("*.parquet"):
-                        try:
-                            year = int(file_path.stem)
-                            years.append(year)
-                        except ValueError:
-                            continue
+                        periods.append(file_path.stem)
                     
-                    if years:
-                        result[venue][market][ticker][interval] = sorted(years)
+                    if periods:
+                        # Sort: years (4 digits) first, then year-month (YYYY-MM)
+                        result[venue][market][ticker][interval] = sorted(periods)
     
     return result
 
