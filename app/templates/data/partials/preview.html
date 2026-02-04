@@ -209,7 +209,7 @@ window.clearFilters = function() {
     htmx.ajax('GET', url, '#data-preview');
 }
 
-// Initialize charts after DOM is ready
+// Initialize TradingView Lightweight Charts
 setTimeout(function() {
     const data = {{ chart_data | safe }};
     
@@ -218,62 +218,78 @@ setTimeout(function() {
         return;
     }
     
-    // Price line chart (close price)
-    const priceLine = {
-        x: data.timestamps,
-        y: data.close,
-        type: 'scatter',
-        mode: 'lines',
-        line: { color: '#3b82f6', width: 1.5 },
-        name: 'Close',
+    // Clear existing charts
+    document.getElementById('price-chart').innerHTML = '';
+    document.getElementById('volume-chart').innerHTML = '';
+    
+    // Chart options
+    const chartOptions = {
+        layout: {
+            background: { type: 'solid', color: 'transparent' },
+            textColor: '#9ca3af',
+        },
+        grid: {
+            vertLines: { color: '#374151' },
+            horzLines: { color: '#374151' },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+            borderColor: '#374151',
+        },
+        timeScale: {
+            borderColor: '#374151',
+            timeVisible: true,
+        },
     };
     
-    const priceLayout = {
-        paper_bgcolor: 'transparent',
-        plot_bgcolor: 'transparent',
-        margin: { t: 10, b: 30, l: 20, r: 60 },
-        xaxis: {
-            color: '#9ca3af',
-            gridcolor: '#374151',
-        },
-        yaxis: {
-            color: '#9ca3af',
-            gridcolor: '#374151',
-            side: 'right',
-        },
-        showlegend: false,
-    };
-    
-    Plotly.newPlot('price-chart', [priceLine], priceLayout, { responsive: true });
-    
-    // Volume chart
-    const colors = data.close.map((c, i) => 
-        i === 0 ? '#6b7280' : (c >= data.close[i-1] ? '#22c55e' : '#ef4444')
+    // Price chart
+    const priceChart = LightweightCharts.createChart(
+        document.getElementById('price-chart'), 
+        { ...chartOptions, height: 400 }
     );
     
-    const volume = {
-        x: data.timestamps,
-        y: data.volume,
-        type: 'bar',
-        marker: { color: colors, opacity: 0.7 },
-    };
+    const lineSeries = priceChart.addLineSeries({
+        color: '#3b82f6',
+        lineWidth: 2,
+    });
     
-    const volumeLayout = {
-        paper_bgcolor: 'transparent',
-        plot_bgcolor: 'transparent',
-        margin: { t: 5, b: 20, l: 20, r: 60 },
-        xaxis: {
-            color: '#9ca3af',
-            gridcolor: '#374151',
-        },
-        yaxis: {
-            color: '#9ca3af',
-            gridcolor: '#374151',
-            side: 'right',
-        },
-        showlegend: false,
-    };
+    // Convert data to Lightweight Charts format
+    const priceData = data.timestamps.map((t, i) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: data.close[i],
+    }));
+    lineSeries.setData(priceData);
     
-    Plotly.newPlot('volume-chart', [volume], volumeLayout, { responsive: true });
+    // Volume chart
+    const volumeChart = LightweightCharts.createChart(
+        document.getElementById('volume-chart'),
+        { ...chartOptions, height: 120 }
+    );
+    
+    const volumeSeries = volumeChart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+    });
+    
+    const volumeData = data.timestamps.map((t, i) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: data.volume[i],
+        color: i === 0 ? '#6b7280' : (data.close[i] >= data.close[i-1] ? '#22c55e' : '#ef4444'),
+    }));
+    volumeSeries.setData(volumeData);
+    
+    // Sync time scales
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (range) volumeChart.timeScale().setVisibleLogicalRange(range);
+    });
+    volumeChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (range) priceChart.timeScale().setVisibleLogicalRange(range);
+    });
+    
+    // Fit content
+    priceChart.timeScale().fitContent();
+    volumeChart.timeScale().fitContent();
 }, 10);
 </script>
