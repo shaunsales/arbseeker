@@ -115,8 +115,8 @@ async def data_preview(
         # Prepare table data
         table_data = _prepare_table_data(table_df)
         
-        # Generate chart data (sampled for performance)
-        chart_data = _prepare_chart_data(df, max_points=2000)
+        # Generate chart data (all points - Plotly handles it well)
+        chart_data = _prepare_chart_data(df, max_points=50000)
         
         # Date range for filters
         date_range = {
@@ -350,6 +350,9 @@ def _prepare_chart_data(df, max_points: int = 2000) -> dict:
     if len(df) > max_points:
         step = len(df) // max_points
         df = df.iloc[::step]
+    
+    # Fill NaN values to avoid JSON issues
+    df = df.fillna(0)
     
     return {
         "timestamps": [t.isoformat() for t in df.index],

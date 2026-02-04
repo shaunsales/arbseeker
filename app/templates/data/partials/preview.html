@@ -149,8 +149,8 @@
 </div>
 
 <script>
-// Current state
-const previewState = {
+// Current state (use var to allow redeclaration on HTMX swap)
+var previewState = {
     venue: '{{ venue }}',
     market: '{{ market }}',
     ticker: '{{ ticker }}',
@@ -161,7 +161,7 @@ const previewState = {
     endDate: '{{ date_range.end }}',
 };
 
-function showTab(tab) {
+window.showTab = function(tab) {
     document.getElementById('view-chart').classList.toggle('hidden', tab !== 'chart');
     document.getElementById('view-table').classList.toggle('hidden', tab !== 'table');
     document.getElementById('tab-chart').classList.toggle('border-blue-500', tab === 'chart');
@@ -172,9 +172,9 @@ function showTab(tab) {
     document.getElementById('tab-table').classList.toggle('text-blue-400', tab === 'table');
     document.getElementById('tab-table').classList.toggle('border-transparent', tab !== 'table');
     document.getElementById('tab-table').classList.toggle('text-gray-400', tab !== 'table');
-}
+};
 
-function buildUrl(page, pageSize, startDate, endDate) {
+window.buildUrl = function(page, pageSize, startDate, endDate) {
     let url = `/data/preview/${previewState.venue}/${previewState.market}/${previewState.ticker}/${previewState.interval}`;
     const params = new URLSearchParams();
     if (page > 1) params.set('page', page);
@@ -183,34 +183,40 @@ function buildUrl(page, pageSize, startDate, endDate) {
     if (endDate) params.set('end_date', endDate);
     if (params.toString()) url += '?' + params.toString();
     return url;
-}
+};
 
-function goToPage(page) {
+window.goToPage = function(page) {
     const url = buildUrl(page, previewState.pageSize, previewState.startDate, previewState.endDate);
     htmx.ajax('GET', url, '#data-preview');
-}
+};
 
-function changePageSize(size) {
+window.changePageSize = function(size) {
     const url = buildUrl(1, parseInt(size), previewState.startDate, previewState.endDate);
     htmx.ajax('GET', url, '#data-preview');
-}
+};
 
-function applyFilters() {
+window.applyFilters = function() {
     const startDate = document.getElementById('filter-start').value;
     const endDate = document.getElementById('filter-end').value;
     const url = buildUrl(1, previewState.pageSize, startDate, endDate);
     htmx.ajax('GET', url, '#data-preview');
-}
+};
 
-function clearFilters() {
+window.clearFilters = function() {
     document.getElementById('filter-start').value = '';
     document.getElementById('filter-end').value = '';
     const url = buildUrl(1, previewState.pageSize, '', '');
     htmx.ajax('GET', url, '#data-preview');
 }
 
-(function() {
+// Initialize charts after DOM is ready
+setTimeout(function() {
     const data = {{ chart_data | safe }};
+    
+    if (!data || !data.timestamps || data.timestamps.length === 0) {
+        console.error('No chart data available');
+        return;
+    }
     
     // Price line chart (close price)
     const priceLine = {
@@ -269,5 +275,5 @@ function clearFilters() {
     };
     
     Plotly.newPlot('volume-chart', [volume], volumeLayout, { responsive: true });
-})();
+}, 10);
 </script>
