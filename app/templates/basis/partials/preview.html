@@ -1,0 +1,140 @@
+<!-- Basis Preview -->
+<div class="space-y-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-xl font-semibold">{{ ticker }} / {{ interval }}</h2>
+            <p class="text-sm text-gray-400">
+                {{ stats.start }} to {{ stats.end }} | {{ stats.bars }} bars
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-1 bg-green-900 text-green-300 rounded text-xs">
+                {{ "{:.1f}".format(stats.quality_pct) }}% quality
+            </span>
+        </div>
+    </div>
+    
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-4 gap-3">
+        {% for venue in quote_venues %}
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">{{ venue }} Mean</div>
+            <div class="text-lg font-semibold">{{ "{:.1f}".format(stats[venue + '_mean_bps']) }} bps</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">{{ venue }} Std</div>
+            <div class="text-lg font-semibold">{{ "{:.1f}".format(stats[venue + '_std_bps']) }} bps</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">{{ venue }} Min</div>
+            <div class="text-lg font-semibold text-red-400">{{ "{:.1f}".format(stats[venue + '_min_bps']) }} bps</div>
+        </div>
+        <div class="bg-gray-700 rounded p-3">
+            <div class="text-gray-400 text-xs uppercase">{{ venue }} Max</div>
+            <div class="text-lg font-semibold text-green-400">{{ "{:.1f}".format(stats[venue + '_max_bps']) }} bps</div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Charts -->
+    <div id="basis-chart" class="bg-gray-900 rounded" style="height: 300px;"></div>
+    <div id="price-chart" class="bg-gray-900 rounded" style="height: 200px;"></div>
+</div>
+
+<script>
+setTimeout(function() {
+    const data = {{ chart_data | safe }};
+    
+    if (!data || !data.timestamps || data.timestamps.length === 0) {
+        console.error('No chart data');
+        return;
+    }
+    
+    // Clear existing charts
+    document.getElementById('basis-chart').innerHTML = '';
+    document.getElementById('price-chart').innerHTML = '';
+    
+    const chartOptions = {
+        layout: {
+            background: { type: 'solid', color: 'transparent' },
+            textColor: '#9ca3af',
+        },
+        grid: {
+            vertLines: { color: '#374151' },
+            horzLines: { color: '#374151' },
+        },
+        rightPriceScale: { borderColor: '#374151' },
+        timeScale: { borderColor: '#374151', timeVisible: true },
+    };
+    
+    // Basis chart (bps)
+    const basisChart = LightweightCharts.createChart(
+        document.getElementById('basis-chart'),
+        { ...chartOptions, height: 300 }
+    );
+    
+    {% for venue in quote_venues %}
+    const {{ venue }}_basis = basisChart.addLineSeries({
+        color: '#f59e0b',
+        lineWidth: 1.5,
+        title: '{{ venue }} basis (bps)',
+    });
+    {{ venue }}_basis.setData(data.timestamps.map((t, i) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: data.{{ venue }}_basis_bps[i],
+    })));
+    {% endfor %}
+    
+    // Add zero line
+    const zeroLine = basisChart.addLineSeries({
+        color: '#6b7280',
+        lineWidth: 1,
+        lineStyle: 2,
+    });
+    zeroLine.setData(data.timestamps.map((t) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: 0,
+    })));
+    
+    // Price chart
+    const priceChart = LightweightCharts.createChart(
+        document.getElementById('price-chart'),
+        { ...chartOptions, height: 200 }
+    );
+    
+    const baseLine = priceChart.addLineSeries({
+        color: '#3b82f6',
+        lineWidth: 1.5,
+        title: 'Base',
+    });
+    baseLine.setData(data.timestamps.map((t, i) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: data.base_price[i],
+    })));
+    
+    {% for venue in quote_venues %}
+    const {{ venue }}_price = priceChart.addLineSeries({
+        color: '#22c55e',
+        lineWidth: 1.5,
+        title: '{{ venue }}',
+    });
+    {{ venue }}_price.setData(data.timestamps.map((t, i) => ({
+        time: Math.floor(new Date(t).getTime() / 1000),
+        value: data.{{ venue }}_price[i],
+    })));
+    {% endfor %}
+    
+    // Sync time scales
+    basisChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (range) priceChart.timeScale().setVisibleLogicalRange(range);
+    });
+    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (range) basisChart.timeScale().setVisibleLogicalRange(range);
+    });
+    
+    // Fit content
+    basisChart.timeScale().fitContent();
+    priceChart.timeScale().fitContent();
+}, 10);
+</script>

@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% set active_tab = "basis" %}
+{% block title %}Basis Builder - Strategy Lab{% endblock %}
+
+{% block content %}
+<div class="flex gap-6">
+    <!-- Sidebar: Builder Form + Existing Basis Files -->
+    <div class="w-96 flex-shrink-0">
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <!-- Tabs -->
+            <div class="flex border-b border-gray-700">
+                <button id="sidebar-tab-create" onclick="showSidebarTab('create')" 
+                        class="flex-1 px-4 py-3 text-sm font-medium border-b-2 border-blue-500 text-blue-400">
+                    Create New
+                </button>
+                <button id="sidebar-tab-existing" onclick="showSidebarTab('existing')" 
+                        class="flex-1 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+                    Existing
+                </button>
+            </div>
+            
+            <!-- Create Tab -->
+            <div id="sidebar-create" class="p-4">
+                <form id="basis-form" class="space-y-4">
+                    <!-- Base Venue -->
+                    <div class="p-3 bg-gray-700 rounded">
+                        <div class="text-sm font-medium text-gray-300 mb-2">Base (Reference Price)</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Venue</label>
+                                <select name="base_venue" id="base-venue" onchange="updateBaseOptions()" 
+                                        class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                    <option value="">Select...</option>
+                                    {% for venue in data_tree.keys() %}
+                                    <option value="{{ venue }}">{{ venue }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Market</label>
+                                <select name="base_market" id="base-market" onchange="updateBaseTickers()"
+                                        class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                    <option value="">Select...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="block text-xs text-gray-400 mb-1">Ticker</label>
+                            <select name="base_ticker" id="base-ticker" onchange="updateIntervals()"
+                                    class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                <option value="">Select...</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Quote Venue -->
+                    <div class="p-3 bg-gray-700 rounded">
+                        <div class="text-sm font-medium text-gray-300 mb-2">Quote (Comparison Price)</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Venue</label>
+                                <select name="quote_venue" id="quote-venue" onchange="updateQuoteOptions()"
+                                        class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                    <option value="">Select...</option>
+                                    {% for venue in data_tree.keys() %}
+                                    <option value="{{ venue }}">{{ venue }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Market</label>
+                                <select name="quote_market" id="quote-market" onchange="updateQuoteTickers()"
+                                        class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                    <option value="">Select...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="block text-xs text-gray-400 mb-1">Ticker</label>
+                            <select name="quote_ticker" id="quote-ticker" onchange="checkOverlap()"
+                                    class="w-full bg-gray-600 border border-gray-500 rounded px-2 py-1.5 text-sm">
+                                <option value="">Select...</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Interval -->
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Interval</label>
+                        <select name="interval" id="interval" onchange="checkOverlap()"
+                                class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                            <option value="">Select...</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Overlap Status -->
+                    <div id="overlap-status" class="hidden">
+                        <div id="overlap-info" class="p-3 rounded text-sm"></div>
+                    </div>
+                    
+                    <!-- Create Button -->
+                    <button type="submit" id="create-btn" disabled
+                            class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded transition">
+                        Create Basis File
+                    </button>
+                </form>
+                
+                <!-- Result Message -->
+                <div id="create-result" class="hidden mt-3 p-3 rounded text-sm"></div>
+            </div>
+            
+            <!-- Existing Tab -->
+            <div id="sidebar-existing" class="p-4 hidden">
+                {% if basis_files %}
+                <div class="space-y-2 text-sm">
+                    {% for ticker, intervals in basis_files.items() %}
+                    <div class="tree-item">
+                        <div class="font-medium text-gray-300">📊 {{ ticker }}</div>
+                        {% for interval, periods in intervals.items() %}
+                        <div class="ml-4 mt-1">
+                            {% for period in periods %}
+                            <button onclick="loadBasisPreview('{{ ticker }}', '{{ interval }}', '{{ period }}')"
+                                    class="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer block">
+                                └─ {{ interval }}/ [{{ period }}]
+                            </button>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-gray-500 text-sm">
+                    <p>No basis files created yet.</p>
+                    <p class="mt-2">Use the Create tab to build one.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Main: Preview Area -->
+    <div class="flex-1">
+        <div id="basis-preview" class="bg-gray-800 rounded-lg p-6 border border-gray-700 min-h-[600px]">
+            <div class="text-center text-gray-500 py-12">
+                <div class="text-4xl mb-3">📈</div>
+                <p>Configure base and quote venues to preview basis</p>
+                <p class="text-sm mt-2">Or select an existing basis file</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Data tree for dynamic dropdowns
+const dataTree = {{ data_tree | tojson | safe }};
+
+// Sidebar tab switching
+function showSidebarTab(tab) {
+    document.getElementById('sidebar-create').classList.toggle('hidden', tab !== 'create');
+    document.getElementById('sidebar-existing').classList.toggle('hidden', tab !== 'existing');
+    document.getElementById('sidebar-tab-create').classList.toggle('border-blue-500', tab === 'create');
+    document.getElementById('sidebar-tab-create').classList.toggle('text-blue-400', tab === 'create');
+    document.getElementById('sidebar-tab-create').classList.toggle('border-transparent', tab !== 'create');
+    document.getElementById('sidebar-tab-create').classList.toggle('text-gray-400', tab !== 'create');
+    document.getElementById('sidebar-tab-existing').classList.toggle('border-blue-500', tab === 'existing');
+    document.getElementById('sidebar-tab-existing').classList.toggle('text-blue-400', tab === 'existing');
+    document.getElementById('sidebar-tab-existing').classList.toggle('border-transparent', tab !== 'existing');
+    document.getElementById('sidebar-tab-existing').classList.toggle('text-gray-400', tab !== 'existing');
+}
+
+// Update base market options
+function updateBaseOptions() {
+    const venue = document.getElementById('base-venue').value;
+    const marketSelect = document.getElementById('base-market');
+    marketSelect.innerHTML = '<option value="">Select...</option>';
+    
+    if (venue && dataTree[venue]) {
+        for (const market of Object.keys(dataTree[venue])) {
+            marketSelect.innerHTML += `<option value="${market}">${market}</option>`;
+        }
+    }
+    updateBaseTickers();
+}
+
+function updateBaseTickers() {
+    const venue = document.getElementById('base-venue').value;
+    const market = document.getElementById('base-market').value;
+    const tickerSelect = document.getElementById('base-ticker');
+    tickerSelect.innerHTML = '<option value="">Select...</option>';
+    
+    if (venue && market && dataTree[venue] && dataTree[venue][market]) {
+        for (const ticker of Object.keys(dataTree[venue][market])) {
+            tickerSelect.innerHTML += `<option value="${ticker}">${ticker}</option>`;
+        }
+    }
+    updateIntervals();
+}
+
+// Update quote market options
+function updateQuoteOptions() {
+    const venue = document.getElementById('quote-venue').value;
+    const marketSelect = document.getElementById('quote-market');
+    marketSelect.innerHTML = '<option value="">Select...</option>';
+    
+    if (venue && dataTree[venue]) {
+        for (const market of Object.keys(dataTree[venue])) {
+            marketSelect.innerHTML += `<option value="${market}">${market}</option>`;
+        }
+    }
+    updateQuoteTickers();
+}
+
+function updateQuoteTickers() {
+    const venue = document.getElementById('quote-venue').value;
+    const market = document.getElementById('quote-market').value;
+    const tickerSelect = document.getElementById('quote-ticker');
+    tickerSelect.innerHTML = '<option value="">Select...</option>';
+    
+    if (venue && market && dataTree[venue] && dataTree[venue][market]) {
+        for (const ticker of Object.keys(dataTree[venue][market])) {
+            tickerSelect.innerHTML += `<option value="${ticker}">${ticker}</option>`;
+        }
+    }
+    checkOverlap();
+}
+
+// Update interval options based on both venues
+function updateIntervals() {
+    const baseVenue = document.getElementById('base-venue').value;
+    const baseMarket = document.getElementById('base-market').value;
+    const baseTicker = document.getElementById('base-ticker').value;
+    const intervalSelect = document.getElementById('interval');
+    intervalSelect.innerHTML = '<option value="">Select...</option>';
+    
+    if (baseVenue && baseMarket && baseTicker && 
+        dataTree[baseVenue] && dataTree[baseVenue][baseMarket] && 
+        dataTree[baseVenue][baseMarket][baseTicker]) {
+        const intervals = Object.keys(dataTree[baseVenue][baseMarket][baseTicker]);
+        for (const interval of intervals) {
+            intervalSelect.innerHTML += `<option value="${interval}">${interval}</option>`;
+        }
+    }
+    checkOverlap();
+}
+
+// Check for overlapping periods
+async function checkOverlap() {
+    const baseVenue = document.getElementById('base-venue').value;
+    const baseMarket = document.getElementById('base-market').value;
+    const baseTicker = document.getElementById('base-ticker').value;
+    const quoteVenue = document.getElementById('quote-venue').value;
+    const quoteMarket = document.getElementById('quote-market').value;
+    const quoteTicker = document.getElementById('quote-ticker').value;
+    const interval = document.getElementById('interval').value;
+    
+    const statusDiv = document.getElementById('overlap-status');
+    const infoDiv = document.getElementById('overlap-info');
+    const createBtn = document.getElementById('create-btn');
+    
+    if (!baseVenue || !baseMarket || !baseTicker || !quoteVenue || !quoteMarket || !quoteTicker || !interval) {
+        statusDiv.classList.add('hidden');
+        createBtn.disabled = true;
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/basis/check-overlap?` + new URLSearchParams({
+            base_venue: baseVenue,
+            base_market: baseMarket,
+            base_ticker: baseTicker,
+            quote_venue: quoteVenue,
+            quote_market: quoteMarket,
+            quote_ticker: quoteTicker,
+            interval: interval,
+        }));
+        const data = await response.json();
+        
+        statusDiv.classList.remove('hidden');
+        
+        if (data.has_overlap) {
+            infoDiv.className = 'p-3 rounded text-sm bg-green-900 text-green-300';
+            infoDiv.innerHTML = `
+                <div class="font-medium">✓ Overlapping data found</div>
+                <div class="mt-1 text-xs">
+                    ${data.overlap_start?.slice(0, 10)} to ${data.overlap_end?.slice(0, 10)}
+                </div>
+            `;
+            createBtn.disabled = false;
+            window.overlapData = data;
+        } else {
+            infoDiv.className = 'p-3 rounded text-sm bg-red-900 text-red-300';
+            infoDiv.innerHTML = `
+                <div class="font-medium">✗ No overlapping data</div>
+                <div class="mt-1 text-xs">
+                    Base: ${data.base_range?.[0]?.slice(0, 10) || 'none'} to ${data.base_range?.[1]?.slice(0, 10) || 'none'}<br>
+                    Quote: ${data.quote_range?.[0]?.slice(0, 10) || 'none'} to ${data.quote_range?.[1]?.slice(0, 10) || 'none'}
+                </div>
+            `;
+            createBtn.disabled = true;
+        }
+    } catch (e) {
+        console.error(e);
+        statusDiv.classList.add('hidden');
+        createBtn.disabled = true;
+    }
+}
+
+// Create basis file
+document.getElementById('basis-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const form = e.target;
+    const resultDiv = document.getElementById('create-result');
+    
+    // Determine periods to use
+    let periods = [];
+    if (window.overlapData) {
+        // Use all available periods that might overlap
+        periods = [...new Set([...window.overlapData.base_periods, ...window.overlapData.quote_periods])];
+    }
+    
+    const data = {
+        base_venue: form.base_venue.value,
+        base_market: form.base_market.value,
+        base_ticker: form.base_ticker.value,
+        quote_venue: form.quote_venue.value,
+        quote_market: form.quote_market.value,
+        quote_ticker: form.quote_ticker.value,
+        quote_name: form.quote_venue.value,
+        interval: form.interval.value,
+        periods: periods,
+    };
+    
+    try {
+        const response = await fetch('/basis/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const result = await response.json();
+        
+        resultDiv.classList.remove('hidden');
+        
+        if (result.success) {
+            resultDiv.className = 'mt-3 p-3 rounded text-sm bg-green-900 text-green-300';
+            resultDiv.innerHTML = `
+                <div class="font-medium">✓ Basis file created</div>
+                <div class="mt-1 text-xs">
+                    ${result.bars} bars, ${result.coverage_pct.toFixed(1)}% coverage<br>
+                    ${result.start?.slice(0, 10)} to ${result.end?.slice(0, 10)}
+                </div>
+            `;
+            // Reload to update existing files list
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            resultDiv.className = 'mt-3 p-3 rounded text-sm bg-red-900 text-red-300';
+            resultDiv.innerHTML = `<div class="font-medium">✗ Error: ${result.error}</div>`;
+        }
+    } catch (e) {
+        resultDiv.classList.remove('hidden');
+        resultDiv.className = 'mt-3 p-3 rounded text-sm bg-red-900 text-red-300';
+        resultDiv.innerHTML = `<div class="font-medium">✗ Error: ${e.message}</div>`;
+    }
+});
+
+// Load basis preview
+function loadBasisPreview(ticker, interval, period) {
+    htmx.ajax('GET', `/basis/preview/${ticker}/${interval}?period=${period}`, '#basis-preview');
+}
+</script>
+{% endblock %}

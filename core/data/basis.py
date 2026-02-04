@@ -202,6 +202,52 @@ def load_basis(
     return pd.concat(dfs).sort_index()
 
 
+def find_overlapping_periods(
+    base_venue: str, base_market: str, base_ticker: str,
+    quote_venue: str, quote_market: str, quote_ticker: str,
+    interval: str,
+) -> dict:
+    """
+    Find overlapping time periods between base and quote data.
+    
+    Returns:
+        Dict with 'base_periods', 'quote_periods', 'overlap' info
+    """
+    base_periods = list_available_periods(base_venue, base_market, base_ticker, interval)
+    quote_periods = list_available_periods(quote_venue, quote_market, quote_ticker, interval)
+    
+    if not base_periods or not quote_periods:
+        return {
+            "base_periods": base_periods or [],
+            "quote_periods": quote_periods or [],
+            "overlap_start": None,
+            "overlap_end": None,
+            "has_overlap": False,
+        }
+    
+    # Get date ranges for each
+    base_start, base_end = _periods_to_date_range(base_periods)
+    quote_start, quote_end = _periods_to_date_range(quote_periods)
+    
+    # Find overlap
+    overlap_start = max(base_start, quote_start) if base_start and quote_start else None
+    overlap_end = min(base_end, quote_end) if base_end and quote_end else None
+    
+    has_overlap = overlap_start and overlap_end and overlap_start < overlap_end
+    
+    return {
+        "base_periods": base_periods,
+        "quote_periods": quote_periods,
+        "base_range": (base_start.isoformat() if base_start else None, 
+                       base_end.isoformat() if base_end else None),
+        "quote_range": (quote_start.isoformat() if quote_start else None,
+                        quote_end.isoformat() if quote_end else None),
+        "overlap_start": overlap_start.isoformat() if overlap_start else None,
+        "overlap_end": overlap_end.isoformat() if overlap_end else None,
+        "has_overlap": has_overlap,
+    }
+
+
 def list_basis_files() -> dict:
     """
     List all available basis files.
