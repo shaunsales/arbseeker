@@ -52,7 +52,7 @@ Computed at runtime (NOT stored):
 
 ## Phase 2: Basis Files
 
-### 2.1 Basis Data Schema
+### 2.1 Basis Data Schema ✅
 Pre-computed basis data with one base venue and multiple quote venues:
 
 ```
@@ -67,8 +67,10 @@ Columns:
 - data_quality (str) - "ok", "base_stale", "quote_stale", "gap"
 ```
 
-### 2.2 Basis Builder Tool
+### 2.2 Basis Builder Tool ✅
 New module: `core/data/basis.py` with `create_basis_file()` function.
+- Flexible period loading (handles yearly vs monthly format mismatches)
+- `load_basis()` and `list_basis_files()` utilities
 
 ### 2.3 Web App Basis Builder UI
 - [ ] Select base venue/ticker
