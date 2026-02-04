@@ -288,8 +288,14 @@ setTimeout(function() {
         if (range) priceChart.timeScale().setVisibleLogicalRange(range);
     });
     
-    // Fit content
-    priceChart.timeScale().fitContent();
-    volumeChart.timeScale().fitContent();
+    // Fit all content in view
+    priceChart.timeScale().setVisibleRange({
+        from: priceData[0].time,
+        to: priceData[priceData.length - 1].time,
+    });
+    volumeChart.timeScale().setVisibleRange({
+        from: volumeData[0].time,
+        to: volumeData[volumeData.length - 1].time,
+    });
 }, 10);
 </script>
