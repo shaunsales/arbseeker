@@ -11,7 +11,6 @@ from core.data.storage import (
     delete_period,
 )
 from core.data.binance import download_binance_year, list_binance_symbols
-from core.data.hyperliquid import download_hyperliquid_range, download_paxg_perp, list_hyperliquid_symbols
 from core.data.hyperliquid_s3 import download_s3_range, validate_aws_credentials, probe_s3_date, find_earliest_s3_date
 from core.data.market_hours import (
     add_market_open_from_volume,
@@ -35,10 +34,6 @@ __all__ = [
     # Binance
     "download_binance_year",
     "list_binance_symbols",
-    # Hyperliquid
-    "download_hyperliquid_range",
-    "download_paxg_perp",
-    "list_hyperliquid_symbols",
     # Hyperliquid S3
     "download_s3_range",
     "validate_aws_credentials",

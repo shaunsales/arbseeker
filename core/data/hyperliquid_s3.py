@@ -263,12 +263,14 @@ def download_s3_range(
         day_trades = []
         hours_ok = 0
         hours_missing = 0
+        day_bytes = 0
 
         for hour in range(24):
             if is_cancelled():
                 break
 
-            trades = _download_and_parse_hour(s3_client, date_str, hour, symbol)
+            trades, nbytes = _download_and_parse_hour(s3_client, date_str, hour, symbol)
+            day_bytes += nbytes
             if trades is None:
                 hours_missing += 1
                 continue
@@ -285,9 +287,9 @@ def download_s3_range(
             if month_key not in monthly_data:
                 monthly_data[month_key] = []
             monthly_data[month_key].append(day_df)
-            log(f"  {hours_ok}/24 hours | {len(day_trades):,} trades | {len(day_df):,} bars")
+            log(f"  {hours_ok}/24 hours | {len(day_trades):,} trades | {len(day_df):,} bars | {_fmt_bytes(day_bytes)}")
         else:
-            log(f"  {hours_ok}/24 hours | no trades for {symbol}")
+            log(f"  {hours_ok}/24 hours | no trades for {symbol} | {_fmt_bytes(day_bytes)}")
             if hours_missing == 24:
                 log(f"  ⚠ No data available for this date (future or too old?)")
 
@@ -330,8 +332,12 @@ def download_s3_range(
 
 def _download_and_parse_hour(
     s3_client, date_str: str, hour: int, symbol: str
-) -> Optional[list[dict]]:
-    """Download one hour of trade data from S3, decompress, and extract trades in memory."""
+) -> tuple[Optional[list[dict]], int]:
+    """Download one hour of trade data from S3, decompress, and extract trades in memory.
+
+    Returns:
+        (trades_list_or_None, compressed_bytes_downloaded)
+    """
     key = f"{S3_PREFIX}/{date_str}/{hour}.lz4"
 
     try:
@@ -342,13 +348,15 @@ def _download_and_parse_hour(
         )
         compressed = resp["Body"].read()
     except botocore.exceptions.ClientError:
-        return None
+        return None, 0
+
+    compressed_size = len(compressed)
 
     # Decompress LZ4 in memory
     try:
         raw = lz4.frame.decompress(compressed)
     except Exception:
-        return None
+        return None, compressed_size
 
     # Parse trades from JSON lines
     trades = []
@@ -370,7 +378,7 @@ def _download_and_parse_hour(
         except (json.JSONDecodeError, KeyError, ValueError):
             continue
 
-    return trades
+    return trades, compressed_size
 
 
 def _trades_to_ohlcv(trades: list[dict], interval: str = "1m") -> pd.DataFrame:
@@ -395,3 +403,91 @@ def _trades_to_ohlcv(trades: list[dict], interval: str = "1m") -> pd.DataFrame:
 def _month_complete(current_date: datetime, end_date: datetime) -> bool:
     """Check if we'd download the entire month (skip optimization)."""
     return current_date.day == 1
+
+
+def _fmt_bytes(n: int) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def main():
+    """CLI entry point for downloading Hyperliquid S3 trade data."""
+    import argparse
+    import os
+    import time
+
+    parser = argparse.ArgumentParser(
+        description="Download Hyperliquid historical trade data from S3 and convert to OHLCV parquet.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  python -m core.data.hyperliquid_s3 --symbol PAXG --start 2024-06-01 --end 2024-12-31
+  python -m core.data.hyperliquid_s3 --symbol BTC --start 2025-01-01 --end 2025-06-30 --interval 1h
+
+AWS credentials can be passed via --aws-key / --aws-secret flags
+or via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.""",
+    )
+    parser.add_argument("--symbol", "-s", required=True, help="Hyperliquid symbol (e.g. PAXG, BTC, ETH)")
+    parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD, inclusive)")
+    parser.add_argument("--interval", "-i", default="15m", choices=list(RESAMPLE_MAP.keys()), help="OHLCV bar interval (default: 15m)")
+    parser.add_argument("--force", action="store_true", help="Re-download even if data already exists")
+    parser.add_argument("--aws-key", default=None, help="AWS Access Key ID (or set AWS_ACCESS_KEY_ID env var)")
+    parser.add_argument("--aws-secret", default=None, help="AWS Secret Access Key (or set AWS_SECRET_ACCESS_KEY env var)")
+    parser.add_argument("--aws-token", default=None, help="AWS Session Token (optional)")
+
+    args = parser.parse_args()
+
+    # Resolve AWS credentials
+    aws_key = args.aws_key or os.environ.get("AWS_ACCESS_KEY_ID", "")
+    aws_secret = args.aws_secret or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    aws_token = args.aws_token or os.environ.get("AWS_SESSION_TOKEN")
+
+    if not aws_key or not aws_secret:
+        print("ERROR: AWS credentials required.")
+        print("  Pass --aws-key and --aws-secret, or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars.")
+        raise SystemExit(1)
+
+    start_date = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end_date = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    # Validate credentials first
+    print("Validating AWS credentials...")
+    valid, msg = validate_aws_credentials(aws_key, aws_secret, aws_token)
+    if not valid:
+        print(f"ERROR: {msg}")
+        raise SystemExit(1)
+    print(f"  {msg}")
+    print()
+
+    t0 = time.time()
+
+    paths = download_s3_range(
+        symbol=args.symbol,
+        start_date=start_date,
+        end_date=end_date,
+        interval=args.interval,
+        aws_access_key_id=aws_key,
+        aws_secret_access_key=aws_secret,
+        aws_session_token=aws_token,
+        force=args.force,
+        log_callback=print,
+    )
+
+    elapsed = time.time() - t0
+    print(f"\nElapsed: {elapsed:.0f}s")
+
+    if paths:
+        total_size = sum(p.stat().st_size for p in paths if p.exists())
+        print(f"Total output size: {_fmt_bytes(total_size)}")
+        print("\nSaved files:")
+        for p in paths:
+            sz = p.stat().st_size if p.exists() else 0
+            print(f"  {p}  ({_fmt_bytes(sz)})")
+
+
+if __name__ == "__main__":
+    main()

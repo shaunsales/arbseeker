@@ -4,9 +4,7 @@ Data management routes.
 Handles browsing, downloading, and previewing market data.
 """
 
-import asyncio
 import json
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -19,8 +17,6 @@ import io
 
 from core.data.storage import list_all_data, load_ohlcv, list_available_years, list_available_periods, delete_period, clear_all_data, get_data_path
 from core.data.binance import download_binance_year, list_binance_symbols, INTERVALS
-from core.data.hyperliquid import download_hyperliquid_range
-from core.data.hyperliquid_s3 import download_s3_range, validate_aws_credentials
 from core.data.validator import validate_ohlcv, get_data_summary
 
 router = APIRouter()
@@ -28,10 +24,6 @@ templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates"
 
 # Track download jobs
 download_jobs: dict[str, dict] = {}
-# Track log lines per job (for SSE streaming)
-download_logs: dict[str, list[str]] = {}
-# Track cancel events per job
-download_cancel_events: dict[str, threading.Event] = {}
 
 
 class DownloadRequest(BaseModel):
@@ -40,22 +32,7 @@ class DownloadRequest(BaseModel):
     market: str = "futures"
     ticker: str
     interval: str
-    year: Optional[int] = None  # For Binance
-    start_month: Optional[str] = None  # For Hyperliquid (YYYY-MM)
-    end_month: Optional[str] = None  # For Hyperliquid (YYYY-MM)
-    source: Optional[str] = None  # "api" or "s3" for Hyperliquid
-    start_date: Optional[str] = None  # For S3 (YYYY-MM-DD)
-    end_date: Optional[str] = None  # For S3 (YYYY-MM-DD)
-    aws_access_key_id: Optional[str] = None
-    aws_secret_access_key: Optional[str] = None
-    aws_session_token: Optional[str] = None
-
-
-class AWSValidateRequest(BaseModel):
-    """Request to validate AWS credentials."""
-    aws_access_key_id: str
-    aws_secret_access_key: str
-    aws_session_token: Optional[str] = None
+    year: Optional[int] = None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -176,13 +153,7 @@ async def data_preview(
 @router.post("/download")
 async def download_data(request: DownloadRequest, background_tasks: BackgroundTasks):
     """Start a data download job."""
-    # Generate job ID based on venue
-    if request.venue == "binance":
-        job_id = f"binance_{request.ticker}_{request.interval}_{request.year}"
-    elif request.venue == "hyperliquid" and request.source == "s3":
-        job_id = f"hl_s3_{request.ticker}_{request.interval}_{request.start_date}_{request.end_date}"
-    else:
-        job_id = f"hyperliquid_{request.ticker}_{request.interval}_{request.start_month}_{request.end_month}"
+    job_id = f"binance_{request.ticker}_{request.interval}_{request.year}"
     
     # Check if already downloading
     if job_id in download_jobs and download_jobs[job_id]["status"] == "running":
@@ -195,38 +166,14 @@ async def download_data(request: DownloadRequest, background_tasks: BackgroundTa
         "message": "Starting download...",
     }
     
-    # Start background download
-    if request.venue == "binance":
-        background_tasks.add_task(
-            _download_binance_task,
-            job_id,
-            request.ticker,
-            request.interval,
-            request.year,
-            request.market,
-        )
-    elif request.venue == "hyperliquid" and request.source == "s3":
-        download_logs[job_id] = []
-        background_tasks.add_task(
-            _download_hyperliquid_s3_task,
-            job_id,
-            request.ticker,
-            request.interval,
-            request.start_date,
-            request.end_date,
-            request.aws_access_key_id,
-            request.aws_secret_access_key,
-            request.aws_session_token,
-        )
-    else:
-        background_tasks.add_task(
-            _download_hyperliquid_task,
-            job_id,
-            request.ticker,
-            request.interval,
-            request.start_month,
-            request.end_month,
-        )
+    background_tasks.add_task(
+        _download_binance_task,
+        job_id,
+        request.ticker,
+        request.interval,
+        request.year,
+        request.market,
+    )
     
     return {"job_id": job_id, "status": "started"}
 
@@ -237,21 +184,6 @@ async def download_status(job_id: str):
     if job_id not in download_jobs:
         return {"status": "not_found"}
     return download_jobs[job_id]
-
-
-@router.post("/download/cancel/{job_id}")
-async def cancel_download(job_id: str):
-    """Cancel a running download job."""
-    if job_id not in download_jobs:
-        return {"cancelled": False, "message": "Job not found"}
-    if download_jobs[job_id].get("status") != "running":
-        return {"cancelled": False, "message": "Job is not running"}
-    if job_id in download_cancel_events:
-        download_cancel_events[job_id].set()
-        download_jobs[job_id]["status"] = "cancelled"
-        download_jobs[job_id]["message"] = "Cancelling..."
-        return {"cancelled": True, "message": "Cancel requested"}
-    return {"cancelled": False, "message": "Job does not support cancellation"}
 
 
 @router.delete("/{venue}/{market}/{ticker}/{interval}/{period}")
@@ -298,159 +230,6 @@ async def _download_binance_task(job_id: str, ticker: str, interval: str, year: 
             "progress": 0,
             "message": str(e),
         }
-
-
-async def _download_hyperliquid_task(job_id: str, ticker: str, interval: str, start_month: str, end_month: str):
-    """Background task for downloading Hyperliquid data."""
-    def progress_callback(current: int, total: int, message: str):
-        download_jobs[job_id] = {
-            "status": "running",
-            "progress": int((current / total) * 100),
-            "message": message,
-        }
-    
-    try:
-        paths = download_hyperliquid_range(
-            symbol=ticker,
-            interval=interval,
-            start_period=start_month,
-            end_period=end_month,
-            progress_callback=progress_callback,
-        )
-        
-        download_jobs[job_id] = {
-            "status": "complete",
-            "progress": 100,
-            "message": f"Downloaded {len(paths)} months" if paths else "No data available",
-            "paths": [str(p) for p in paths] if paths else None,
-        }
-    except Exception as e:
-        download_jobs[job_id] = {
-            "status": "error",
-            "progress": 0,
-            "message": str(e),
-        }
-
-
-@router.post("/aws/validate")
-async def validate_aws(request: AWSValidateRequest):
-    """Validate AWS credentials against the Hyperliquid S3 bucket."""
-    loop = asyncio.get_event_loop()
-    success, message = await loop.run_in_executor(
-        None,
-        lambda: validate_aws_credentials(
-            aws_access_key_id=request.aws_access_key_id,
-            aws_secret_access_key=request.aws_secret_access_key,
-            aws_session_token=request.aws_session_token or None,
-        ),
-    )
-    return {"valid": success, "message": message}
-
-
-@router.get("/download/logs/{job_id}")
-async def download_logs_stream(job_id: str):
-    """SSE endpoint that streams log lines for an S3 download job."""
-    async def event_generator():
-        sent = 0
-        while True:
-            logs = download_logs.get(job_id, [])
-            # Send any new lines
-            while sent < len(logs):
-                line = logs[sent]
-                yield f"data: {json.dumps({'line': line})}\n\n"
-                sent += 1
-
-            # Check if job is done
-            job = download_jobs.get(job_id, {})
-            status = job.get("status", "")
-            if status in ("complete", "error", "cancelled"):
-                # Send final status event
-                yield f"event: done\ndata: {json.dumps({'status': status, 'message': job.get('message', '')})}\n\n"
-                break
-
-            await asyncio.sleep(0.3)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-async def _download_hyperliquid_s3_task(
-    job_id: str,
-    ticker: str,
-    interval: str,
-    start_date_str: str,
-    end_date_str: str,
-    aws_access_key_id: str,
-    aws_secret_access_key: str,
-    aws_session_token: Optional[str] = None,
-):
-    """Background task for downloading Hyperliquid data from S3."""
-    cancel_event = threading.Event()
-    download_cancel_events[job_id] = cancel_event
-
-    def log_callback(msg: str):
-        if job_id in download_logs:
-            download_logs[job_id].append(msg)
-
-    def progress_callback(current: int, total: int, message: str):
-        download_jobs[job_id] = {
-            "status": "running",
-            "progress": int((current / total) * 100),
-            "message": message,
-        }
-
-    try:
-        start_dt = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_dt = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-
-        loop = asyncio.get_event_loop()
-        paths = await loop.run_in_executor(
-            None,
-            lambda: download_s3_range(
-                symbol=ticker,
-                start_date=start_dt,
-                end_date=end_dt,
-                interval=interval,
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
-                log_callback=log_callback,
-                progress_callback=progress_callback,
-                cancel_event=cancel_event,
-            ),
-        )
-
-        if cancel_event.is_set():
-            saved = len(paths) if paths else 0
-            download_jobs[job_id] = {
-                "status": "cancelled",
-                "progress": download_jobs.get(job_id, {}).get("progress", 0),
-                "message": f"Cancelled. Saved {saved} monthly file(s) from partial download.",
-                "paths": [str(p) for p in paths] if paths else None,
-            }
-        else:
-            download_jobs[job_id] = {
-                "status": "complete",
-                "progress": 100,
-                "message": f"Downloaded {len(paths)} monthly file(s)" if paths else "No data available",
-                "paths": [str(p) for p in paths] if paths else None,
-            }
-    except Exception as e:
-        log_callback(f"\nERROR: {e}")
-        download_jobs[job_id] = {
-            "status": "error",
-            "progress": 0,
-            "message": str(e),
-        }
-    finally:
-        download_cancel_events.pop(job_id, None)
 
 
 @router.get("/export/{venue}/{market}/{ticker}/{interval}")

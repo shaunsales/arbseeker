@@ -21,7 +21,6 @@ python-multipart>=0.0.6
 boto3>=1.28.0
 
 # Existing integrations
-hyperliquid-python-sdk
 
 
 # Testing
