@@ -3,13 +3,13 @@ pandas>=3.0.0
 numpy>=2.0.0
 pyarrow>=14.0.0
 requests>=2.31.0
+lz4>=4.0.0
 
 # Technical indicators (Phase 2)
 pandas-ta>=0.3.14b
 
 # Visualization
 matplotlib
-plotly>=5.18.0
 
 # Web app (Phase 4)
 fastapi>=0.109.0
@@ -17,14 +17,14 @@ uvicorn>=0.27.0
 jinja2>=3.1.0
 python-multipart>=0.0.6
 
+# AWS S3 access
+boto3>=1.28.0
+
 # Existing integrations
 yfinance
 hyperliquid-python-sdk
-git+https://github.com/asterdex/aster-connector-python.git
 
-# Testing & reporting
+
+# Testing
 pytest
 pytest-mock
-fpdf2
-statsmodels
-quantstats>=0.0.62

@@ -65,6 +65,13 @@
                             {% endfor %}
                         </select>
                     </div>
+                    <div id="hl-source-group" class="hidden">
+                        <label class="block text-sm text-gray-400 mb-1">Source</label>
+                        <select name="source" id="source-select" onchange="updateFormForSource()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                            <option value="api">API (recent data)</option>
+                            <option value="s3">S3 Historical (full history)</option>
+                        </select>
+                    </div>
                     <div id="month-range-group" class="hidden space-y-2">
                         <div>
                             <label class="block text-sm text-gray-400 mb-1">Start Month</label>
@@ -75,6 +82,36 @@
                             <label class="block text-sm text-gray-400 mb-1">End Month</label>
                             <input type="month" name="end_month" value="2025-12" 
                                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+                    <div id="s3-date-range-group" class="hidden space-y-2">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Start Date</label>
+                            <input type="date" name="start_date" id="s3-start-date" value="2024-01-01" 
+                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">End Date</label>
+                            <input type="date" name="end_date" id="s3-end-date" value="2025-12-31" 
+                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+                    <div id="aws-creds-group" class="hidden space-y-2">
+                        <div class="border-t border-gray-600 pt-3 mt-1">
+                            <label class="block text-sm text-gray-400 mb-2 font-medium">AWS Credentials</label>
+                            <div class="space-y-2">
+                                <input type="text" name="aws_access_key_id" id="aws-key-id" placeholder="Access Key ID" 
+                                       class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none font-mono" autocomplete="off">
+                                <input type="password" name="aws_secret_access_key" id="aws-secret" placeholder="Secret Access Key" 
+                                       class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none font-mono" autocomplete="off">
+                                <input type="password" name="aws_session_token" id="aws-token" placeholder="Session Token (optional)" 
+                                       class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none font-mono" autocomplete="off">
+                            </div>
+                            <button type="button" id="validate-aws-btn" onclick="validateAWSCreds()" 
+                                    class="mt-2 w-full bg-gray-600 hover:bg-gray-500 text-gray-200 text-sm py-1.5 px-3 rounded transition">
+                                Validate Credentials
+                            </button>
+                            <div id="aws-validation-result" class="hidden mt-2 text-xs px-2 py-1.5 rounded"></div>
                         </div>
                     </div>
                     <button type="submit" 
@@ -89,9 +126,23 @@
                         <span id="download-status" class="text-gray-400">Downloading...</span>
                         <span id="download-percent" class="text-blue-400">0%</span>
                     </div>
-                    <div class="w-full bg-gray-700 rounded-full h-2">
-                        <div id="download-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 bg-gray-700 rounded-full h-2">
+                            <div id="download-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+                        </div>
+                        <button id="cancel-download-btn" onclick="cancelDownload()" class="hidden text-xs text-red-400 hover:text-red-300 font-medium whitespace-nowrap">
+                            Cancel
+                        </button>
                     </div>
+                </div>
+                
+                <!-- S3 Log Window -->
+                <div id="s3-log-window" class="hidden mt-3">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs text-gray-400 font-medium">Download Log</span>
+                        <button onclick="document.getElementById('s3-log-output').textContent = ''; " class="text-xs text-gray-500 hover:text-gray-300">Clear</button>
+                    </div>
+                    <div id="s3-log-output" class="bg-gray-900 border border-gray-700 rounded p-2 text-xs font-mono text-gray-300 max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed"></div>
                 </div>
             </div>
         </div>
@@ -132,19 +183,108 @@ function updateFormForVenue() {
     const marketGroup = document.getElementById('market-group');
     const yearGroup = document.getElementById('year-group');
     const monthRangeGroup = document.getElementById('month-range-group');
+    const hlSourceGroup = document.getElementById('hl-source-group');
+    const s3DateRangeGroup = document.getElementById('s3-date-range-group');
+    const awsCredsGroup = document.getElementById('aws-creds-group');
     const tickerInput = document.getElementById('ticker-input');
     
     if (venue === 'binance') {
         marketGroup.classList.remove('hidden');
         yearGroup.classList.remove('hidden');
         monthRangeGroup.classList.add('hidden');
+        hlSourceGroup.classList.add('hidden');
+        s3DateRangeGroup.classList.add('hidden');
+        awsCredsGroup.classList.add('hidden');
         tickerInput.value = 'BTCUSDT';
     } else if (venue === 'hyperliquid') {
         marketGroup.classList.add('hidden');
         yearGroup.classList.add('hidden');
-        monthRangeGroup.classList.remove('hidden');
+        hlSourceGroup.classList.remove('hidden');
         tickerInput.value = 'PAXG';
+        // Reset source to API
+        document.getElementById('source-select').value = 'api';
+        updateFormForSource();
     }
+}
+
+// Update form based on Hyperliquid source selection
+function updateFormForSource() {
+    const source = document.getElementById('source-select').value;
+    const monthRangeGroup = document.getElementById('month-range-group');
+    const s3DateRangeGroup = document.getElementById('s3-date-range-group');
+    const awsCredsGroup = document.getElementById('aws-creds-group');
+    
+    if (source === 'api') {
+        monthRangeGroup.classList.remove('hidden');
+        s3DateRangeGroup.classList.add('hidden');
+        awsCredsGroup.classList.add('hidden');
+    } else {
+        monthRangeGroup.classList.add('hidden');
+        s3DateRangeGroup.classList.remove('hidden');
+        awsCredsGroup.classList.remove('hidden');
+    }
+}
+
+// Validate AWS credentials
+async function validateAWSCreds() {
+    const btn = document.getElementById('validate-aws-btn');
+    const resultDiv = document.getElementById('aws-validation-result');
+    const keyId = document.getElementById('aws-key-id').value.trim();
+    const secret = document.getElementById('aws-secret').value.trim();
+    const token = document.getElementById('aws-token').value.trim();
+    
+    if (!keyId || !secret) {
+        resultDiv.className = 'mt-2 text-xs px-2 py-1.5 rounded bg-yellow-900/50 text-yellow-400';
+        resultDiv.textContent = 'Please enter Access Key ID and Secret Access Key';
+        resultDiv.classList.remove('hidden');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = 'Validating...';
+    resultDiv.classList.add('hidden');
+    
+    try {
+        const response = await fetch('/data/aws/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                aws_access_key_id: keyId,
+                aws_secret_access_key: secret,
+                aws_session_token: token || null,
+            }),
+        });
+        const result = await response.json();
+        
+        if (result.valid) {
+            resultDiv.className = 'mt-2 text-xs px-2 py-1.5 rounded bg-green-900/50 text-green-400';
+        } else {
+            resultDiv.className = 'mt-2 text-xs px-2 py-1.5 rounded bg-red-900/50 text-red-400';
+        }
+        resultDiv.textContent = result.message;
+        resultDiv.classList.remove('hidden');
+    } catch (err) {
+        resultDiv.className = 'mt-2 text-xs px-2 py-1.5 rounded bg-red-900/50 text-red-400';
+        resultDiv.textContent = 'Network error: ' + err.message;
+        resultDiv.classList.remove('hidden');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Validate Credentials';
+    }
+}
+
+// Track current job for cancellation
+let currentJobId = null;
+
+// Cancel the current download
+async function cancelDownload() {
+    if (!currentJobId) return;
+    const btn = document.getElementById('cancel-download-btn');
+    btn.textContent = 'Cancelling...';
+    btn.disabled = true;
+    try {
+        await fetch(`/data/download/cancel/${currentJobId}`, { method: 'POST' });
+    } catch(e) {}
 }
 
 // Download form handler
@@ -153,6 +293,8 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
     
     const form = e.target;
     const venue = form.venue.value;
+    const source = form.source ? form.source.value : 'api';
+    const isS3 = venue === 'hyperliquid' && source === 's3';
     
     let data;
     if (venue === 'binance') {
@@ -163,10 +305,30 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
             interval: form.interval.value,
             year: parseInt(form.year.value),
         };
-    } else if (venue === 'hyperliquid') {
+    } else if (venue === 'hyperliquid' && isS3) {
+        const keyId = document.getElementById('aws-key-id').value.trim();
+        const secret = document.getElementById('aws-secret').value.trim();
+        if (!keyId || !secret) {
+            alert('Please enter AWS credentials for S3 download');
+            return;
+        }
         data = {
             venue: 'hyperliquid',
             market: 'perp',
+            source: 's3',
+            ticker: form.ticker.value.toUpperCase(),
+            interval: form.interval.value,
+            start_date: form.start_date.value,
+            end_date: form.end_date.value,
+            aws_access_key_id: keyId,
+            aws_secret_access_key: secret,
+            aws_session_token: document.getElementById('aws-token').value.trim() || null,
+        };
+    } else {
+        data = {
+            venue: 'hyperliquid',
+            market: 'perp',
+            source: 'api',
             ticker: form.ticker.value.toUpperCase(),
             interval: form.interval.value,
             start_month: form.start_month.value,
@@ -179,11 +341,28 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
     const statusEl = document.getElementById('download-status');
     const percentEl = document.getElementById('download-percent');
     const barEl = document.getElementById('download-bar');
+    const logWindow = document.getElementById('s3-log-window');
+    const logOutput = document.getElementById('s3-log-output');
     
     progressDiv.classList.remove('hidden');
+    barEl.className = 'bg-blue-600 h-2 rounded-full transition-all';
     statusEl.textContent = 'Starting...';
     percentEl.textContent = '0%';
     barEl.style.width = '0%';
+    
+    // Show cancel button
+    const cancelBtn = document.getElementById('cancel-download-btn');
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.disabled = false;
+    
+    // Show log window for S3 downloads
+    if (isS3) {
+        logOutput.textContent = '';
+        logWindow.classList.remove('hidden');
+    } else {
+        logWindow.classList.add('hidden');
+    }
     
     try {
         // Start download
@@ -195,39 +374,105 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
         
         const result = await response.json();
         const jobId = result.job_id;
+        currentJobId = jobId;
         
-        // Poll for status
-        const pollStatus = async () => {
-            const statusResponse = await fetch(`/data/download/status/${jobId}`);
-            const status = await statusResponse.json();
-            
-            statusEl.textContent = status.message || 'Downloading...';
-            percentEl.textContent = `${status.progress}%`;
-            barEl.style.width = `${status.progress}%`;
-            
-            if (status.status === 'running') {
-                setTimeout(pollStatus, 500);
-            } else if (status.status === 'complete') {
-                statusEl.textContent = 'Complete!';
-                barEl.classList.remove('bg-blue-600');
-                barEl.classList.add('bg-green-600');
-                // Refresh tree
-                htmx.trigger('#data-tree', 'load');
-                // Hide progress after delay
-                setTimeout(() => progressDiv.classList.add('hidden'), 2000);
-            } else if (status.status === 'error') {
-                statusEl.textContent = `Error: ${status.message}`;
-                barEl.classList.remove('bg-blue-600');
-                barEl.classList.add('bg-red-600');
-            }
-        };
-        
-        pollStatus();
+        if (isS3) {
+            // Use SSE for real-time log streaming
+            startLogStream(jobId, statusEl, percentEl, barEl, progressDiv, logOutput);
+        } else {
+            // Poll for status (existing behavior)
+            pollDownloadStatus(jobId, statusEl, percentEl, barEl, progressDiv);
+        }
     } catch (err) {
         statusEl.textContent = `Error: ${err.message}`;
         barEl.classList.add('bg-red-600');
     }
 });
+
+// Poll-based status for Binance / HL API downloads
+function pollDownloadStatus(jobId, statusEl, percentEl, barEl, progressDiv) {
+    const poll = async () => {
+        const statusResponse = await fetch(`/data/download/status/${jobId}`);
+        const status = await statusResponse.json();
+        
+        statusEl.textContent = status.message || 'Downloading...';
+        percentEl.textContent = `${status.progress}%`;
+        barEl.style.width = `${status.progress}%`;
+        
+        if (status.status === 'running') {
+            setTimeout(poll, 500);
+        } else if (status.status === 'complete') {
+            statusEl.textContent = 'Complete!';
+            barEl.className = 'bg-green-600 h-2 rounded-full transition-all';
+            document.getElementById('cancel-download-btn').classList.add('hidden');
+            htmx.trigger('#data-tree', 'load');
+            setTimeout(() => progressDiv.classList.add('hidden'), 3000);
+        } else if (status.status === 'cancelled') {
+            statusEl.textContent = status.message || 'Cancelled';
+            barEl.className = 'bg-yellow-600 h-2 rounded-full transition-all';
+            document.getElementById('cancel-download-btn').classList.add('hidden');
+            htmx.trigger('#data-tree', 'load');
+        } else if (status.status === 'error') {
+            statusEl.textContent = `Error: ${status.message}`;
+            barEl.className = 'bg-red-600 h-2 rounded-full transition-all';
+            document.getElementById('cancel-download-btn').classList.add('hidden');
+        }
+    };
+    poll();
+}
+
+// SSE-based log streaming for S3 downloads
+function startLogStream(jobId, statusEl, percentEl, barEl, progressDiv, logOutput) {
+    const evtSource = new EventSource(`/data/download/logs/${jobId}`);
+    
+    // Also poll progress bar in parallel
+    const progressInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/data/download/status/${jobId}`);
+            const s = await res.json();
+            statusEl.textContent = s.message || 'Downloading...';
+            percentEl.textContent = `${s.progress}%`;
+            barEl.style.width = `${s.progress}%`;
+        } catch(e) {}
+    }, 1000);
+    
+    evtSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.line !== undefined) {
+            logOutput.textContent += data.line + '\n';
+            // Auto-scroll to bottom
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+    };
+    
+    evtSource.addEventListener('done', (event) => {
+        const data = JSON.parse(event.data);
+        evtSource.close();
+        clearInterval(progressInterval);
+        
+        document.getElementById('cancel-download-btn').classList.add('hidden');
+        
+        if (data.status === 'complete') {
+            statusEl.textContent = 'Complete!';
+            percentEl.textContent = '100%';
+            barEl.style.width = '100%';
+            barEl.className = 'bg-green-600 h-2 rounded-full transition-all';
+            htmx.trigger('#data-tree', 'load');
+        } else if (data.status === 'cancelled') {
+            statusEl.textContent = data.message || 'Cancelled';
+            barEl.className = 'bg-yellow-600 h-2 rounded-full transition-all';
+            htmx.trigger('#data-tree', 'load');
+        } else {
+            statusEl.textContent = `Error: ${data.message}`;
+            barEl.className = 'bg-red-600 h-2 rounded-full transition-all';
+        }
+    });
+    
+    evtSource.onerror = () => {
+        evtSource.close();
+        clearInterval(progressInterval);
+    };
+}
 
 // Load preview when clicking on data item
 function loadPreview(venue, market, ticker, interval) {
