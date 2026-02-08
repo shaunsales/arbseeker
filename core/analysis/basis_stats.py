@@ -36,6 +36,8 @@ def compute_basis_stats(basis_bps: pd.Series, interval: str) -> dict:
     stats["std_bps"] = float(clean.std())
     stats["min_bps"] = float(clean.min())
     stats["max_bps"] = float(clean.max())
+    stats["p1_bps"] = float(clean.quantile(0.01))
+    stats["p99_bps"] = float(clean.quantile(0.99))
     stats["median_bps"] = float(clean.median())
     stats["skewness"] = float(clean.skew())
     stats["kurtosis"] = float(clean.kurtosis())  # excess kurtosis
@@ -53,6 +55,9 @@ def compute_basis_stats(basis_bps: pd.Series, interval: str) -> dict:
     stats.update(_half_life(clean, bars_per_day))
     stats.update(_hurst_exponent(clean))
     stats.update(_mean_crossing_rate(clean, bars_per_day))
+
+    # --- Opportunity analysis ---
+    stats.update(_opportunity_analysis(clean, bars_per_day))
 
     return stats
 
@@ -167,6 +172,41 @@ def _mean_crossing_rate(series: pd.Series, bars_per_day: float) -> dict:
         }
     except Exception:
         return {"mean_crossings_total": None, "mean_crossings_per_day": None}
+
+
+def _opportunity_analysis(series: pd.Series, bars_per_day: float) -> dict:
+    """
+    Analyse basis spread opportunities at various thresholds.
+
+    For each threshold, compute:
+    - pct of time |basis| exceeds it
+    - avg occurrences per day
+    - avg duration (in bars) of each excursion
+    """
+    abs_basis = series.abs()
+    n = len(series)
+    total_days = n / bars_per_day if bars_per_day > 0 else 1
+
+    thresholds = [5, 10, 20, 50]
+    opportunities = []
+
+    for t in thresholds:
+        above = abs_basis > t
+        pct_time = float(above.mean() * 100)
+        # Count excursions (transitions from False → True)
+        starts = above & (~above.shift(1, fill_value=False))
+        excursion_count = int(starts.sum())
+        per_day = excursion_count / total_days if total_days > 0 else 0
+        # Avg duration: total bars above / number of excursions
+        avg_dur = float(above.sum() / excursion_count) if excursion_count > 0 else 0
+        opportunities.append({
+            "threshold_bps": t,
+            "pct_time": round(pct_time, 2),
+            "per_day": round(per_day, 1),
+            "avg_duration_bars": round(avg_dur, 1),
+        })
+
+    return {"opportunities": opportunities}
 
 
 def _bars_per_day(interval: str) -> float:

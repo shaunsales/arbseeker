@@ -35,6 +35,7 @@ class BasisSpec:
     interval: str
     periods: list[str]  # ["2025-01", "2025-02", ...] or ["2025"]
     price_column: str = "close"  # Which price to use for basis calculation
+    ffill_limit: Optional[int] = None  # Max bars to forward-fill (None = auto from interval)
 
 
 @dataclass 
@@ -82,6 +83,12 @@ def create_basis_file(spec: BasisSpec, save: bool = True) -> tuple[pd.DataFrame,
         base_gaps = base_df.index.to_series().diff() > pd.Timedelta(expected_freq) * 1.5
         quality_flags = quality_flags.where(~base_gaps, "base_gap")
     
+    # Determine forward-fill limit (bars)
+    ffill_limit = spec.ffill_limit
+    if ffill_limit is None:
+        # Default: 1 hour worth of bars
+        ffill_limit = _ffill_limit_for_interval(spec.interval)
+
     # Load and align each quote venue
     for quote in spec.quote_venues:
         venue_name = quote.get("name", quote["venue"])
@@ -96,9 +103,24 @@ def create_basis_file(spec: BasisSpec, save: bool = True) -> tuple[pd.DataFrame,
             continue
         
         # Align quote data to base timestamps
-        aligned_quote = quote_df[spec.price_column].reindex(result.index)
+        raw_aligned = quote_df[spec.price_column].reindex(result.index)
         
-        # Add price column
+        # Forward-fill sparse quote data (last traded price is still valid)
+        aligned_quote = raw_aligned.ffill(limit=ffill_limit)
+        
+        # Track data quality per bar
+        has_real_data = raw_aligned.notna()
+        has_filled_data = aligned_quote.notna() & ~has_real_data
+        has_no_data = aligned_quote.isna()
+        
+        # Compute staleness: consecutive bars since last real data point
+        # Groups of consecutive non-real bars get incrementing counts
+        not_real = ~has_real_data
+        groups = has_real_data.cumsum()
+        staleness = not_real.groupby(groups).cumsum().astype(int)
+        result[f"{venue_name}_staleness"] = staleness
+        
+        # Add price column (with ffill applied)
         result[f"{venue_name}_price"] = aligned_quote
         
         # Calculate basis
@@ -107,18 +129,9 @@ def create_basis_file(spec: BasisSpec, save: bool = True) -> tuple[pd.DataFrame,
             (aligned_quote - result["base_price"]) / result["base_price"] * 10000
         )
         
-        # Check for stale/missing quote data
-        quote_missing = aligned_quote.isna()
-        quality_flags = quality_flags.where(~quote_missing, f"{venue_name}_stale")
-        
-        # Detect quote gaps (where we had to forward-fill or have missing data)
-        if expected_freq:
-            quote_gaps = quote_df.index.to_series().diff() > pd.Timedelta(expected_freq) * 1.5
-            quote_gap_times = quote_df.index[quote_gaps]
-            for gap_time in quote_gap_times:
-                if gap_time in quality_flags.index:
-                    if quality_flags[gap_time] == "ok":
-                        quality_flags[gap_time] = f"{venue_name}_gap"
+        # Update quality flags
+        quality_flags = quality_flags.where(~has_filled_data, f"{venue_name}_ffill")
+        quality_flags = quality_flags.where(~has_no_data, f"{venue_name}_stale")
     
     result["data_quality"] = quality_flags
     
@@ -371,3 +384,17 @@ def _interval_to_freq(interval: str) -> Optional[str]:
         "1d": "1D",
     }
     return mapping.get(interval)
+
+
+def _ffill_limit_for_interval(interval: str) -> int:
+    """Default forward-fill limit in bars (approx 1 hour of data)."""
+    limits = {
+        "1m": 60,     # 60 bars = 1 hour
+        "5m": 12,     # 12 bars = 1 hour
+        "15m": 4,     # 4 bars = 1 hour
+        "30m": 2,     # 2 bars = 1 hour
+        "1h": 6,      # 6 bars = 6 hours
+        "4h": 3,      # 3 bars = 12 hours
+        "1d": 1,      # 1 bar = 1 day
+    }
+    return limits.get(interval, 60)

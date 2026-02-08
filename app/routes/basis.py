@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import json
+import numpy as np
 
 from core.data.storage import list_all_data
 from core.data.basis import (
@@ -113,28 +114,67 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
             "interval": interval,
         })
     
-    # Prepare chart data
-    chart_data = {
-        "timestamps": [t.isoformat() for t in df.index],
-        "base_price": df["base_price"].fillna(0).tolist(),
-    }
-    
     # Find quote venues from columns
     quote_venues = []
     for col in df.columns:
         if col.endswith("_basis_bps"):
-            venue = col.replace("_basis_bps", "")
-            quote_venues.append(venue)
-            chart_data[f"{venue}_price"] = df[f"{venue}_price"].fillna(0).tolist()
-            chart_data[f"{venue}_basis_bps"] = df[f"{venue}_basis_bps"].fillna(0).tolist()
+            quote_venues.append(col.replace("_basis_bps", ""))
+
+    # Downsample for charting if too many points
+    MAX_CHART_POINTS = 5000
+    chart_df = df
+    chart_interval = interval
+    if len(df) > MAX_CHART_POINTS:
+        step = len(df) // MAX_CHART_POINTS + 1
+        # Map step size to a readable resample label
+        interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}.get(interval, 1)
+        chart_mins = interval_minutes * step
+        if chart_mins >= 1440:
+            chart_interval = f"{chart_mins // 1440}d"
+        elif chart_mins >= 60:
+            chart_interval = f"{chart_mins // 60}h"
+        else:
+            chart_interval = f"{chart_mins}m"
+        chart_df = df.iloc[::step]
+
+    # Build chart data — skip NaN values per series
+    timestamps_epoch = [int(t.timestamp()) for t in chart_df.index]
+
+    def _series_data(values):
+        """Return list of {time, value} dicts, skipping NaN."""
+        return [
+            {"time": timestamps_epoch[i], "value": float(v)}
+            for i, v in enumerate(values)
+            if not (v is None or (isinstance(v, float) and np.isnan(v)))
+        ]
+
+    chart_data = {
+        "base_price": _series_data(chart_df["base_price"].values),
+    }
+    for venue in quote_venues:
+        chart_data[f"{venue}_price"] = _series_data(chart_df[f"{venue}_price"].values)
+        chart_data[f"{venue}_basis_bps"] = _series_data(chart_df[f"{venue}_basis_bps"].values)
+
+    # Build quality timeline chart data
+    # Color-coded: green=ok, yellow=ffill, red=stale/gap
+    quality_color_map = {"ok": None}  # skip ok bars
+    quality_chart = []
+    for i, (ts, q) in enumerate(zip(timestamps_epoch, chart_df["data_quality"].values)):
+        if q == "ok":
+            continue
+        color = "#ef4444" if "stale" in str(q) or "gap" in str(q) else "#f59e0b"
+        quality_chart.append({"time": ts, "value": 1, "color": color})
+    chart_data["quality"] = quality_chart
     
     # Stats
+    quality_counts = df["data_quality"].value_counts()
     stats = {
         "bars": len(df),
         "start": df.index.min().strftime("%Y-%m-%d"),
         "end": df.index.max().strftime("%Y-%m-%d"),
-        "quality_ok": (df["data_quality"] == "ok").sum(),
-        "quality_pct": (df["data_quality"] == "ok").mean() * 100,
+        "quality_ok": int(quality_counts.get("ok", 0)),
+        "quality_pct": float(quality_counts.get("ok", 0)) / len(df) * 100 if len(df) > 0 else 0,
+        "quality_breakdown": {str(k): int(v) for k, v in quality_counts.items()},
     }
     
     # Basis stats for each quote venue
@@ -147,6 +187,7 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
         "request": request,
         "ticker": ticker,
         "interval": interval,
+        "chart_interval": chart_interval,
         "quote_venues": quote_venues,
         "stats": stats,
         "venue_stats": venue_stats,

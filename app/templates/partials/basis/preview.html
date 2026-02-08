@@ -11,7 +11,7 @@
             </div>
         </div>
         <div class="flex items-center gap-2">
-            <span class="px-2 py-1 bg-green-900 text-green-300 rounded text-xs">
+            <span class="px-2 py-1 {% if stats.quality_pct >= 95 %}bg-green-900 text-green-300{% elif stats.quality_pct >= 80 %}bg-yellow-900 text-yellow-300{% else %}bg-red-900 text-red-300{% endif %} rounded text-xs">
                 {{ "{:.1f}".format(stats.quality_pct) }}% quality
             </span>
         </div>
@@ -35,10 +35,12 @@
             <div class="bg-gray-700 rounded p-2.5">
                 <div class="text-gray-400 text-xs">Min</div>
                 <div class="text-base font-semibold text-red-400">{{ "{:.1f}".format(vs.min_bps) }} bps</div>
+                <div class="text-xs text-gray-500 mt-0.5">1st %ile: {{ "{:.1f}".format(vs.p1_bps) }}</div>
             </div>
             <div class="bg-gray-700 rounded p-2.5">
                 <div class="text-gray-400 text-xs">Max</div>
                 <div class="text-base font-semibold text-green-400">{{ "{:.1f}".format(vs.max_bps) }} bps</div>
+                <div class="text-xs text-gray-500 mt-0.5">99th %ile: {{ "{:.1f}".format(vs.p99_bps) }}</div>
             </div>
             <div class="bg-gray-700 rounded p-2.5">
                 <div class="text-gray-400 text-xs">Median</div>
@@ -80,7 +82,9 @@
                 <div class="text-gray-400 text-xs">Half-Life</div>
                 <div class="text-base font-semibold">
                     {% if vs.half_life_days is not none %}
-                        {% if vs.half_life_days < 1 %}
+                        {% if vs.half_life_days * 24 < 1 %}
+                        {{ "{:.1f}".format(vs.half_life_days * 1440) }} min
+                        {% elif vs.half_life_days < 1 %}
                         {{ "{:.1f}".format(vs.half_life_days * 24) }} hrs
                         {% else %}
                         {{ "{:.1f}".format(vs.half_life_days) }} days
@@ -115,11 +119,72 @@
             </div>
         </div>
     </div>
+
+    <!-- Opportunity Analysis -->
+    {% if vs.opportunities %}
+    <div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{{ venue }} — Opportunity Analysis</div>
+        <div class="overflow-hidden rounded border border-gray-700">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-700 text-gray-400 text-xs uppercase">
+                        <th class="px-3 py-2 text-left">|Basis| &gt; Threshold</th>
+                        <th class="px-3 py-2 text-right">% of Time</th>
+                        <th class="px-3 py-2 text-right">Events / Day</th>
+                        <th class="px-3 py-2 text-right">Avg Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for opp in vs.opportunities %}
+                    <tr class="border-t border-gray-700 {% if opp.pct_time > 5 %}text-green-300{% elif opp.pct_time > 0 %}text-gray-300{% else %}text-gray-600{% endif %}">
+                        <td class="px-3 py-1.5 font-mono">&gt; {{ opp.threshold_bps }} bps</td>
+                        <td class="px-3 py-1.5 text-right">{{ opp.pct_time }}%</td>
+                        <td class="px-3 py-1.5 text-right">{{ opp.per_day }}</td>
+                        <td class="px-3 py-1.5 text-right">{{ opp.avg_duration_bars }} bars</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
     {% endfor %}
 
+    <!-- Data Quality Breakdown -->
+    <div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Data Quality</div>
+        <div class="flex flex-wrap gap-2">
+            {% for quality_type, count in stats.quality_breakdown.items() %}
+            <span class="px-2 py-1 rounded text-xs font-mono
+                {% if quality_type == 'ok' %}bg-green-900/50 text-green-400
+                {% elif 'ffill' in quality_type %}bg-yellow-900/50 text-yellow-400
+                {% else %}bg-red-900/50 text-red-400{% endif %}">
+                {{ quality_type }}: {{ "{:,}".format(count) }}
+                <span class="text-gray-500">({{ "{:.1f}".format(count / stats.bars * 100) }}%)</span>
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+
     <!-- Charts -->
-    <div id="basis-chart" class="bg-gray-900 rounded" style="height: 300px;"></div>
-    <div id="price-chart" class="bg-gray-900 rounded" style="height: 200px;"></div>
+    <div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Basis Spread (bps) {% if chart_interval != interval %}— sampled at {{ chart_interval }}{% endif %}</div>
+        <div id="basis-chart" class="bg-gray-900 rounded" style="height: 300px;"></div>
+    </div>
+    <div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Price Overlay {% if chart_interval != interval %}— sampled at {{ chart_interval }}{% endif %}</div>
+        <div id="price-chart" class="bg-gray-900 rounded" style="height: 200px;"></div>
+    </div>
+    <div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Data Quality Timeline
+            <span class="font-normal text-gray-600 normal-case ml-2">
+                <span class="inline-block w-2 h-2 rounded-sm bg-yellow-500 mr-0.5"></span> forward-filled
+                <span class="inline-block w-2 h-2 rounded-sm bg-red-500 ml-2 mr-0.5"></span> stale / gap
+            </span>
+        </div>
+        <div id="quality-chart" class="bg-gray-900 rounded" style="height: 80px;"></div>
+    </div>
 </div>
 
 <!-- Chart data for widget init -->

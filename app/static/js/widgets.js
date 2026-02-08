@@ -78,7 +78,7 @@ function initBasisCharts(quoteVenues) {
     if (!el) return;
 
     const data = JSON.parse(el.textContent);
-    if (!data || !data.timestamps || data.timestamps.length === 0) return;
+    if (!data || !data.base_price || data.base_price.length === 0) return;
 
     const basisEl = document.getElementById('basis-chart');
     const priceEl = document.getElementById('price-chart');
@@ -106,53 +106,73 @@ function initBasisCharts(quoteVenues) {
     const colors = ['#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4'];
 
     venues.forEach((venue, idx) => {
+        const basisKey = venue + '_basis_bps';
+        if (!data[basisKey] || data[basisKey].length === 0) return;
         const series = basisChart.addLineSeries({
             color: colors[idx % colors.length],
             lineWidth: 1.5,
             title: venue + ' basis (bps)',
         });
-        series.setData(data.timestamps.map((t, i) => ({
-            time: Math.floor(new Date(t).getTime() / 1000),
-            value: data[venue + '_basis_bps'][i],
-        })));
+        // Data is already [{time, value}, ...] with NaN filtered out
+        series.setData(data[basisKey]);
     });
 
-    // Zero line
-    const zeroLine = basisChart.addLineSeries({ color: '#6b7280', lineWidth: 1, lineStyle: 2 });
-    zeroLine.setData(data.timestamps.map(t => ({
-        time: Math.floor(new Date(t).getTime() / 1000),
-        value: 0,
-    })));
+    // Zero line using first/last timestamps from basis data
+    const firstVenueKey = venues[0] + '_basis_bps';
+    if (data[firstVenueKey] && data[firstVenueKey].length > 1) {
+        const zeroLine = basisChart.addLineSeries({ color: '#6b7280', lineWidth: 1, lineStyle: 2 });
+        const first = data[firstVenueKey][0].time;
+        const last = data[firstVenueKey][data[firstVenueKey].length - 1].time;
+        zeroLine.setData([{ time: first, value: 0 }, { time: last, value: 0 }]);
+    }
 
     // Price chart
     const priceChart = LightweightCharts.createChart(priceEl, { ...chartOptions, height: 200 });
 
     const baseLine = priceChart.addLineSeries({ color: '#3b82f6', lineWidth: 1.5, title: 'Base' });
-    baseLine.setData(data.timestamps.map((t, i) => ({
-        time: Math.floor(new Date(t).getTime() / 1000),
-        value: data.base_price[i],
-    })));
+    baseLine.setData(data.base_price);
 
     venues.forEach((venue, idx) => {
+        const priceKey = venue + '_price';
+        if (!data[priceKey] || data[priceKey].length === 0) return;
         const series = priceChart.addLineSeries({
             color: '#22c55e',
             lineWidth: 1.5,
             title: venue,
         });
-        series.setData(data.timestamps.map((t, i) => ({
-            time: Math.floor(new Date(t).getTime() / 1000),
-            value: data[venue + '_price'][i],
-        })));
+        series.setData(data[priceKey]);
     });
 
-    // Sync time scales
-    basisChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) priceChart.timeScale().setVisibleLogicalRange(range);
-    });
-    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) basisChart.timeScale().setVisibleLogicalRange(range);
+    // Quality timeline chart
+    const qualityEl = document.getElementById('quality-chart');
+    let qualityChart = null;
+    if (qualityEl && data.quality && data.quality.length > 0) {
+        qualityEl.innerHTML = '';
+        qualityChart = LightweightCharts.createChart(qualityEl, {
+            ...chartOptions,
+            height: 80,
+            rightPriceScale: { visible: false },
+            leftPriceScale: { visible: false },
+        });
+        const qualitySeries = qualityChart.addHistogramSeries({
+            priceScaleId: '',
+            priceFormat: { type: 'volume' },
+        });
+        qualitySeries.setData(data.quality);
+    }
+
+    // Sync all time scales
+    const charts = [basisChart, priceChart, qualityChart].filter(Boolean);
+    charts.forEach((src, si) => {
+        src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (!range) return;
+            charts.forEach((dst, di) => {
+                if (si !== di) dst.timeScale().setVisibleLogicalRange(range);
+            });
+        });
     });
 
     basisChart.timeScale().fitContent();
     priceChart.timeScale().fitContent();
+    if (qualityChart) qualityChart.timeScale().fitContent();
 }
