@@ -1,0 +1,26 @@
+{
+  "_comment": "Top liquidity Hyperliquid perp symbols. Used as default extraction list by hyperliquid_build.",
+  "_updated": "2025-02-08",
+  "symbols": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "HYPE",
+    "XRP",
+    "DOGE",
+    "ZEC",
+    "SUI",
+    "RESOLV",
+    "PUMP",
+    "LTC",
+    "LINK",
+    "BNB",
+    "PAXG",
+    "ASTER",
+    "ADA",
+    "BCH",
+    "XMR",
+    "AVAX",
+    "ENA"
+  ]
+}

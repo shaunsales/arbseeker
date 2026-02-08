@@ -17,6 +17,7 @@ Requires:
 """
 
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
@@ -24,11 +25,12 @@ from typing import Optional, Callable
 import lz4.frame
 import pandas as pd
 
-from core.data.storage import DATA_DIR, save_monthly
+from core.data.storage import DATA_DIR, save_monthly, get_data_path
 from core.data.market_hours import add_market_open_always
 
 
 SOURCES_DIR = DATA_DIR / "sources" / "hyperliquid" / "hourly"
+SYMBOLS_CONFIG = Path(__file__).parent / "hyperliquid_symbols.json"
 
 # Map user-friendly intervals to pandas resample format
 RESAMPLE_MAP = {
@@ -37,6 +39,15 @@ RESAMPLE_MAP = {
 }
 
 DEFAULT_INTERVALS = ["1m", "1h", "1d"]
+
+
+def load_default_symbols() -> list[str]:
+    """Load the default symbol list from hyperliquid_symbols.json."""
+    if not SYMBOLS_CONFIG.exists():
+        return []
+    with open(SYMBOLS_CONFIG) as f:
+        data = json.load(f)
+    return data.get("symbols", [])
 
 
 def list_source_dates() -> list[str]:
@@ -106,6 +117,7 @@ def _trades_to_ohlcv(trades: list[dict]) -> pd.DataFrame:
     ohlcv["volume"] = df["size"].resample("1min").sum()
     ohlcv.columns = ["open", "high", "low", "close", "volume"]
     ohlcv = ohlcv.dropna()
+    ohlcv.index.name = "open_time"
 
     return ohlcv
 
@@ -139,6 +151,7 @@ def build_parquets(
     symbols: Optional[list[str]] = None,
     intervals: Optional[list[str]] = None,
     force: bool = False,
+    cleanup: bool = False,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> list[Path]:
     """
@@ -150,6 +163,7 @@ def build_parquets(
         symbols: List of symbols to extract (None = all found)
         intervals: List of OHLCV intervals to build (default: 1m, 1h, 1d)
         force: Overwrite existing parquet files
+        cleanup: Delete processed LZ4 source directories after successful build
         log_callback: Called with each log line
 
     Returns:
@@ -161,6 +175,11 @@ def build_parquets(
 
     if intervals is None:
         intervals = DEFAULT_INTERVALS
+    # Default to config symbols if none specified
+    if symbols is None:
+        symbols = load_default_symbols()
+        if symbols:
+            log(f"Using default symbol list ({len(symbols)} symbols from hyperliquid_symbols.json)")
     symbols_set = set(symbols) if symbols else None
     symbols_label = ", ".join(sorted(symbols)) if symbols else "ALL"
     intervals_label = ", ".join(intervals)
@@ -189,64 +208,70 @@ def build_parquets(
     log(f"Date range: {all_dates[0]} to {all_dates[-1]}")
     log("")
 
-    # symbol -> month_key -> list of 1m OHLCV DataFrames
-    monthly_1m: dict[str, dict[str, list[pd.DataFrame]]] = {}
-    all_symbols_seen: set[str] = set()
-
-    for day_idx, date_str in enumerate(all_dates, 1):
-        day_dir = SOURCES_DIR / date_str
+    # Group dates by month for memory-efficient processing
+    months_dates: dict[str, list[str]] = {}
+    for date_str in all_dates:
         month_key = f"{date_str[:4]}-{date_str[4:6]}"
-
-        log(f"[Day {day_idx}/{len(all_dates)}] {date_str[:4]}-{date_str[4:6]}-{date_str[6:]}")
-
-        day_trades_by_symbol: dict[str, list[dict]] = {}
-        hours_ok = 0
-
-        for hour in range(24):
-            lz4_path = day_dir / f"{hour}.lz4"
-            if not lz4_path.exists():
-                continue
-
-            hour_data = _parse_lz4_file(lz4_path, symbols_set)
-            if hour_data:
-                hours_ok += 1
-                for sym, trades in hour_data.items():
-                    if sym not in day_trades_by_symbol:
-                        day_trades_by_symbol[sym] = []
-                    day_trades_by_symbol[sym].extend(trades)
-
-        if day_trades_by_symbol:
-            total_trades = sum(len(t) for t in day_trades_by_symbol.values())
-            total_bars = 0
-
-            for sym, trades in day_trades_by_symbol.items():
-                all_symbols_seen.add(sym)
-                day_df = _trades_to_ohlcv(trades)
-                if day_df.empty:
-                    continue
-                total_bars += len(day_df)
-                if sym not in monthly_1m:
-                    monthly_1m[sym] = {}
-                if month_key not in monthly_1m[sym]:
-                    monthly_1m[sym][month_key] = []
-                monthly_1m[sym][month_key].append(day_df)
-
-            log(f"  {hours_ok}/24 hours | {len(day_trades_by_symbol)} symbols | {total_trades:,} trades | {total_bars:,} 1m bars")
-        else:
-            log(f"  {hours_ok}/24 hours | no trades found")
-
-    # Save monthly files per symbol per interval
-    log("")
-    if all_symbols_seen:
-        log(f"Found {len(all_symbols_seen)} symbols: {', '.join(sorted(all_symbols_seen))}")
-    log(f"Saving OHLCV parquets for {len(intervals)} interval(s): {intervals_label}")
+        if month_key not in months_dates:
+            months_dates[month_key] = []
+        months_dates[month_key].append(date_str)
 
     saved_paths = []
-    for sym in sorted(monthly_1m.keys()):
-        ticker = _symbol_to_ticker(sym)
-        months = monthly_1m[sym]
-        for month_key in sorted(months.keys()):
-            dfs = months[month_key]
+    all_symbols_seen: set[str] = set()
+    day_idx = 0
+
+    for month_key in sorted(months_dates.keys()):
+        month_dates = months_dates[month_key]
+        year, month = map(int, month_key.split("-"))
+        log(f"── Month {month_key} ({len(month_dates)} days) ──")
+
+        # Accumulate 1m data for this month only
+        monthly_1m: dict[str, list[pd.DataFrame]] = {}
+
+        for date_str in month_dates:
+            day_idx += 1
+            day_dir = SOURCES_DIR / date_str
+
+            log(f"[Day {day_idx}/{len(all_dates)}] {date_str[:4]}-{date_str[4:6]}-{date_str[6:]}")
+
+            day_trades_by_symbol: dict[str, list[dict]] = {}
+            hours_ok = 0
+
+            for hour in range(24):
+                lz4_path = day_dir / f"{hour}.lz4"
+                if not lz4_path.exists():
+                    continue
+
+                hour_data = _parse_lz4_file(lz4_path, symbols_set)
+                if hour_data:
+                    hours_ok += 1
+                    for sym, trades in hour_data.items():
+                        if sym not in day_trades_by_symbol:
+                            day_trades_by_symbol[sym] = []
+                        day_trades_by_symbol[sym].extend(trades)
+
+            if day_trades_by_symbol:
+                total_trades = sum(len(t) for t in day_trades_by_symbol.values())
+                total_bars = 0
+
+                for sym, trades in day_trades_by_symbol.items():
+                    all_symbols_seen.add(sym)
+                    day_df = _trades_to_ohlcv(trades)
+                    if day_df.empty:
+                        continue
+                    total_bars += len(day_df)
+                    if sym not in monthly_1m:
+                        monthly_1m[sym] = []
+                    monthly_1m[sym].append(day_df)
+
+                log(f"  {hours_ok}/24 hours | {len(day_trades_by_symbol)} symbols | {total_trades:,} trades | {total_bars:,} 1m bars")
+            else:
+                log(f"  {hours_ok}/24 hours | no trades found")
+
+        # Save this month's parquets immediately, then free memory
+        for sym in sorted(monthly_1m.keys()):
+            ticker = _symbol_to_ticker(sym)
+            dfs = monthly_1m[sym]
             if not dfs:
                 continue
 
@@ -254,9 +279,14 @@ def build_parquets(
             base_1m = pd.concat(dfs).sort_index()
             base_1m = base_1m[~base_1m.index.duplicated(keep="first")]
 
-            year, month = map(int, month_key.split("-"))
-
             for interval in intervals:
+                # Skip if parquet already exists (unless force)
+                existing_path = get_data_path("hyperliquid", "perp", ticker, interval, month_key)
+                if existing_path.exists() and not force:
+                    saved_paths.append(existing_path)
+                    log(f"  {ticker}/{interval}/{month_key}: exists, skipping")
+                    continue
+
                 if interval == "1m":
                     resampled = base_1m
                 else:
@@ -272,8 +302,20 @@ def build_parquets(
                 saved_paths.append(path)
                 log(f"  {ticker}/{interval}/{month_key}: {len(out):,} bars → {path.name}")
 
-    log("")
-    log(f"Done! Saved {len(saved_paths)} file(s) across {len(monthly_1m)} symbol(s) × {len(intervals)} interval(s).")
+        del monthly_1m  # free memory before next month
+        log("")
+
+    log(f"Done! Saved {len(saved_paths)} file(s) across {len(all_symbols_seen)} symbol(s) × {len(intervals)} interval(s).")
+
+    # Clean up processed source directories
+    if cleanup and saved_paths:
+        freed = 0
+        for date_str in all_dates:
+            day_dir = SOURCES_DIR / date_str
+            if day_dir.exists():
+                freed += sum(f.stat().st_size for f in day_dir.rglob("*") if f.is_file())
+                shutil.rmtree(day_dir)
+        log(f"Cleanup: removed {len(all_dates)} source dir(s), freed {_fmt_bytes(freed)}")
 
     return saved_paths
 
@@ -303,19 +345,23 @@ def main():
 Source files must exist at: data/sources/hyperliquid/hourly/YYYYMMDD/H.lz4
 Download them first with: python -m core.data.hyperliquid_s3 --help""",
     )
-    parser.add_argument("--symbol", "-s", default="ALL",
-                        help="Symbol(s) to extract: ALL for every symbol, or comma-separated (e.g. BTC,ETH,SOL)")
+    parser.add_argument("--symbol", "-s", default=None,
+                        help="Symbol(s) to extract: ALL for every symbol, or comma-separated (e.g. BTC,ETH,SOL). "
+                             "Default: top-liquidity symbols from hyperliquid_symbols.json")
     parser.add_argument("--start", default=None, help="Start date filter (YYYY-MM-DD)")
     parser.add_argument("--end", default=None, help="End date filter (YYYY-MM-DD)")
     parser.add_argument("--intervals", "-i", default="1m,1h,1d",
                         help="Comma-separated OHLCV intervals to build (default: 1m,1h,1d)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing parquet files")
+    parser.add_argument("--cleanup", action="store_true", help="Delete LZ4 source files after successful build")
 
     args = parser.parse_args()
 
     # Parse symbols
-    if args.symbol.upper() == "ALL":
-        symbols = None
+    if args.symbol is None:
+        symbols = None  # build_parquets will load defaults from config
+    elif args.symbol.upper() == "ALL":
+        symbols = []  # empty list = no filter = extract everything
     else:
         symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
 
@@ -352,6 +398,7 @@ Download them first with: python -m core.data.hyperliquid_s3 --help""",
         symbols=symbols,
         intervals=intervals,
         force=args.force,
+        cleanup=args.cleanup,
         log_callback=print,
     )
 
