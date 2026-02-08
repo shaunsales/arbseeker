@@ -1,20 +1,21 @@
 """
-Hyperliquid S3 historical trade data downloader.
+Hyperliquid S3 raw data downloader.
 
-Downloads raw trade fills from the public Hyperliquid S3 bucket,
-decompresses LZ4 files, extracts trades for a given symbol,
-and converts them to OHLCV bars stored in the standard parquet format.
+Downloads raw hourly LZ4 trade fill files from the public Hyperliquid S3
+bucket and saves them to disk at:
+    data/sources/hyperliquid/hourly/YYYYMMDD/H.lz4
+
+This is Stage 1 of a two-stage pipeline:
+    Stage 1 (this module): Download raw LZ4 files from S3 -> local disk
+    Stage 2 (hyperliquid_build): Parse LZ4 files -> per-symbol OHLCV parquets
 
 Uses boto3 for S3 access — no AWS CLI dependency required.
 
 Requires:
-- AWS credentials (passed as parameters, not from env)
+- AWS credentials (via env vars or CLI flags)
 - boto3 package for S3 access
-- lz4 package for decompression
 """
 
-import io
-import json
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,22 +23,15 @@ from typing import Optional, Callable
 
 import boto3
 import botocore.exceptions
-import lz4.frame
-import pandas as pd
 
-from core.data.storage import save_monthly, get_data_path, list_available_periods
-from core.data.market_hours import add_market_open_always
+from core.data.storage import DATA_DIR
 
 
 S3_BUCKET_NAME = "hl-mainnet-node-data"
 S3_PREFIX = "node_fills_by_block/hourly"
 S3_REGION = "eu-west-2"
 
-# Map user-friendly intervals to pandas resample format
-RESAMPLE_MAP = {
-    "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
-    "1h": "1h", "4h": "4h", "1d": "1D",
-}
+SOURCES_DIR = DATA_DIR / "sources" / "hyperliquid" / "hourly"
 
 
 def _make_session(
@@ -158,11 +152,19 @@ def find_earliest_s3_date(
     return None
 
 
+def list_local_dates() -> list[str]:
+    """List YYYYMMDD date folders already downloaded to sources."""
+    if not SOURCES_DIR.exists():
+        return []
+    return sorted(
+        d.name for d in SOURCES_DIR.iterdir()
+        if d.is_dir() and len(d.name) == 8 and d.name.isdigit()
+    )
+
+
 def download_s3_range(
-    symbol: str,
     start_date: datetime,
     end_date: datetime,
-    interval: str,
     aws_access_key_id: str,
     aws_secret_access_key: str,
     aws_session_token: Optional[str] = None,
@@ -172,23 +174,24 @@ def download_s3_range(
     cancel_event: Optional[threading.Event] = None,
 ) -> list[Path]:
     """
-    Download trade data from Hyperliquid S3 and save as monthly OHLCV parquets.
+    Download raw LZ4 trade files from Hyperliquid S3 to local disk.
+
+    Saves files to: data/sources/hyperliquid/hourly/YYYYMMDD/H.lz4
+    Skips hours that already exist on disk unless force=True.
 
     Args:
-        symbol: Hyperliquid symbol (e.g., 'PAXG')
         start_date: Start date (UTC)
         end_date: End date (UTC, inclusive)
-        interval: OHLCV bar interval (e.g., '15m', '1h')
         aws_access_key_id: AWS access key
         aws_secret_access_key: AWS secret key
         aws_session_token: Optional AWS session token
-        force: Re-download even if data exists
-        log_callback: Called with each log line for UI streaming
+        force: Re-download even if file exists on disk
+        log_callback: Called with each log line
         progress_callback: Called with (current_day, total_days, message)
         cancel_event: If set, download will stop when this event is triggered
 
     Returns:
-        List of paths to saved parquet files
+        List of paths to saved LZ4 files
     """
     def log(msg: str):
         if log_callback:
@@ -202,8 +205,9 @@ def download_s3_range(
 
     # Calculate total days
     total_days = (end_date - start_date).days + 1
-    log(f"Downloading {symbol} from S3: {start_date.date()} to {end_date.date()} ({total_days} days)")
-    log(f"Interval: {interval} | Bucket: {S3_BUCKET_NAME}/{S3_PREFIX}")
+    log(f"Downloading raw LZ4 from S3: {start_date.date()} to {end_date.date()} ({total_days} days)")
+    log(f"Bucket: {S3_BUCKET_NAME}/{S3_PREFIX}")
+    log(f"Output: {SOURCES_DIR}/")
     log("")
 
     # Probe start date to validate data availability
@@ -216,6 +220,9 @@ def download_s3_range(
         )
         if earliest:
             log(f"  Found data starting at {earliest.date()}")
+            if earliest > end_date:
+                log(f"  Earliest data ({earliest.date()}) is after end date ({end_date.date()}) — no data in range.")
+                return []
             log(f"  Adjusting start date from {start_date.date()} → {earliest.date()}")
             start_date = earliest
             total_days = (end_date - start_date).days + 1
@@ -231,7 +238,8 @@ def download_s3_range(
         log("Download cancelled.")
         return []
 
-    monthly_data: dict[str, list[pd.DataFrame]] = {}
+    saved_paths: list[Path] = []
+    total_bytes = 0
     current_date = start_date
     day_num = 0
 
@@ -243,25 +251,16 @@ def download_s3_range(
 
         day_num += 1
         date_str = current_date.strftime("%Y%m%d")
-        month_key = current_date.strftime("%Y-%m")
+        day_dir = SOURCES_DIR / date_str
+        day_dir.mkdir(parents=True, exist_ok=True)
 
         if progress_callback:
             progress_callback(day_num, total_days, f"Day {day_num}/{total_days}: {current_date.date()}")
 
         log(f"[Day {day_num}/{total_days}] {current_date.date()}")
 
-        # Check if this month already exists and we're not forcing
-        if not force:
-            existing = list_available_periods("hyperliquid", "perp", symbol, interval)
-            if month_key in existing and _month_complete(current_date, end_date):
-                log(f"  Month {month_key} already exists, skipping...")
-                if month_key not in monthly_data:
-                    monthly_data[month_key] = []  # mark as handled
-                current_date += timedelta(days=1)
-                continue
-
-        day_trades = []
         hours_ok = 0
+        hours_skipped = 0
         hours_missing = 0
         day_bytes = 0
 
@@ -269,60 +268,47 @@ def download_s3_range(
             if is_cancelled():
                 break
 
-            trades, nbytes = _download_and_parse_hour(s3_client, date_str, hour, symbol)
-            day_bytes += nbytes
-            if trades is None:
-                hours_missing += 1
+            dest = day_dir / f"{hour}.lz4"
+
+            # Skip if already downloaded
+            if dest.exists() and not force:
+                hours_skipped += 1
+                saved_paths.append(dest)
                 continue
 
-            day_trades.extend(trades)
-            hours_ok += 1
+            nbytes = _download_hour(s3_client, date_str, hour, dest)
+            if nbytes > 0:
+                hours_ok += 1
+                day_bytes += nbytes
+                total_bytes += nbytes
+                saved_paths.append(dest)
+            else:
+                hours_missing += 1
 
-        if is_cancelled():
-            current_date += timedelta(days=1)
-            continue
+        parts = []
+        if hours_ok:
+            parts.append(f"{hours_ok} downloaded")
+        if hours_skipped:
+            parts.append(f"{hours_skipped} cached")
+        if hours_missing:
+            parts.append(f"{hours_missing} missing")
+        status = " | ".join(parts)
 
-        if day_trades:
-            day_df = _trades_to_ohlcv(day_trades, interval)
-            if month_key not in monthly_data:
-                monthly_data[month_key] = []
-            monthly_data[month_key].append(day_df)
-            log(f"  {hours_ok}/24 hours | {len(day_trades):,} trades | {len(day_df):,} bars | {_fmt_bytes(day_bytes)}")
+        if day_bytes:
+            log(f"  {status} | {_fmt_bytes(day_bytes)}")
         else:
-            log(f"  {hours_ok}/24 hours | no trades for {symbol} | {_fmt_bytes(day_bytes)}")
+            log(f"  {status}")
             if hours_missing == 24:
                 log(f"  ⚠ No data available for this date (future or too old?)")
 
         current_date += timedelta(days=1)
 
-    # Save monthly files
     log("")
-    log("Saving monthly files...")
-
-    saved_paths = []
-    for month_key in sorted(monthly_data.keys()):
-        dfs = monthly_data[month_key]
-        if not dfs:
-            # Month was skipped (already existed)
-            path = get_data_path("hyperliquid", "perp", symbol, interval, month_key)
-            if path.exists():
-                saved_paths.append(path)
-                log(f"  {month_key}: already exists (skipped)")
-            continue
-
-        combined = pd.concat(dfs).sort_index()
-        combined = combined[~combined.index.duplicated(keep="first")]
-
-        # Add market_open column
-        combined = add_market_open_always(combined, "market_open")
-
-        year, month = map(int, month_key.split("-"))
-        path = save_monthly(combined, "hyperliquid", "perp", symbol, interval, year, month)
-        saved_paths.append(path)
-        log(f"  {month_key}: {len(combined):,} bars → {path.name}")
-
+    log(f"Done! {len(saved_paths)} files | {_fmt_bytes(total_bytes)} downloaded")
+    log(f"Source files saved to: {SOURCES_DIR}/")
     log("")
-    log(f"Done! Saved {len(saved_paths)} monthly file(s).")
+    log("Next step: run the builder to create OHLCV parquets:")
+    log("  python -m core.data.hyperliquid_build --help")
 
     if progress_callback:
         progress_callback(total_days, total_days, "Complete")
@@ -330,13 +316,11 @@ def download_s3_range(
     return saved_paths
 
 
-def _download_and_parse_hour(
-    s3_client, date_str: str, hour: int, symbol: str
-) -> tuple[Optional[list[dict]], int]:
-    """Download one hour of trade data from S3, decompress, and extract trades in memory.
+def _download_hour(s3_client, date_str: str, hour: int, dest: Path) -> int:
+    """Download one hourly LZ4 file from S3 and save to disk.
 
     Returns:
-        (trades_list_or_None, compressed_bytes_downloaded)
+        Number of bytes downloaded, or 0 if file doesn't exist.
     """
     key = f"{S3_PREFIX}/{date_str}/{hour}.lz4"
 
@@ -346,63 +330,12 @@ def _download_and_parse_hour(
             Key=key,
             RequestPayer="requester",
         )
-        compressed = resp["Body"].read()
+        data = resp["Body"].read()
     except botocore.exceptions.ClientError:
-        return None, 0
+        return 0
 
-    compressed_size = len(compressed)
-
-    # Decompress LZ4 in memory
-    try:
-        raw = lz4.frame.decompress(compressed)
-    except Exception:
-        return None, compressed_size
-
-    # Parse trades from JSON lines
-    trades = []
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            block = json.loads(line)
-            for event in block.get("events", []):
-                if len(event) >= 2:
-                    fill = event[1]
-                    if fill.get("coin") == symbol:
-                        trades.append({
-                            "time": fill["time"],
-                            "price": float(fill["px"]),
-                            "size": float(fill["sz"]),
-                            "side": fill["side"],
-                        })
-        except (json.JSONDecodeError, KeyError, ValueError):
-            continue
-
-    return trades, compressed_size
-
-
-def _trades_to_ohlcv(trades: list[dict], interval: str = "1m") -> pd.DataFrame:
-    """Convert raw trades to OHLCV DataFrame."""
-    if not trades:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(trades)
-    df["timestamp"] = pd.to_datetime(df["time"], unit="ms", utc=True)
-    df = df.set_index("timestamp")
-
-    resample_interval = RESAMPLE_MAP.get(interval, interval)
-
-    ohlcv = df["price"].resample(resample_interval).ohlc()
-    ohlcv["volume"] = df["size"].resample(resample_interval).sum()
-    ohlcv.columns = ["open", "high", "low", "close", "volume"]
-    ohlcv = ohlcv.dropna()
-
-    return ohlcv
-
-
-def _month_complete(current_date: datetime, end_date: datetime) -> bool:
-    """Check if we'd download the entire month (skip optimization)."""
-    return current_date.day == 1
+    dest.write_bytes(data)
+    return len(data)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -414,42 +347,73 @@ def _fmt_bytes(n: int) -> str:
     return f"{n:.1f} TB"
 
 
+def _load_env_file(path: Optional[Path] = None) -> dict[str, str]:
+    """Load key=value pairs from a .env file. Ignores comments and blank lines."""
+    if path is None:
+        path = Path(__file__).parent.parent.parent / ".env"
+    if not path.exists():
+        return {}
+    env = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            # Strip optional quotes
+            value = value.strip().strip("'\"")
+            env[key.strip()] = value
+    return env
+
+
 def main():
-    """CLI entry point for downloading Hyperliquid S3 trade data."""
+    """CLI entry point for downloading Hyperliquid S3 raw data."""
     import argparse
     import os
     import time
 
     parser = argparse.ArgumentParser(
-        description="Download Hyperliquid historical trade data from S3 and convert to OHLCV parquet.",
+        description="Download raw Hyperliquid trade data (LZ4) from S3 to local disk.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  python -m core.data.hyperliquid_s3 --symbol PAXG --start 2024-06-01 --end 2024-12-31
-  python -m core.data.hyperliquid_s3 --symbol BTC --start 2025-01-01 --end 2025-06-30 --interval 1h
+  python -m core.data.hyperliquid_s3 --start 2026-01-01 --end 2026-01-02
+  python -m core.data.hyperliquid_s3 --start 2026-01-01 --end 2026-01-31 --force
 
-AWS credentials can be passed via --aws-key / --aws-secret flags
-or via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.""",
+Files are saved to: data/sources/hyperliquid/hourly/YYYYMMDD/H.lz4
+Then use the builder to create OHLCV parquets:
+  python -m core.data.hyperliquid_build --symbol BTC,ETH --start 2026-01-01 --end 2026-01-02
+
+AWS credentials are resolved in order:
+  1. --aws-key / --aws-secret CLI flags
+  2. AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables
+  3. .env file in the project root""",
     )
-    parser.add_argument("--symbol", "-s", required=True, help="Hyperliquid symbol (e.g. PAXG, BTC, ETH)")
     parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD, inclusive)")
-    parser.add_argument("--interval", "-i", default="15m", choices=list(RESAMPLE_MAP.keys()), help="OHLCV bar interval (default: 15m)")
-    parser.add_argument("--force", action="store_true", help="Re-download even if data already exists")
+    parser.add_argument("--force", action="store_true", help="Re-download even if files exist on disk")
     parser.add_argument("--aws-key", default=None, help="AWS Access Key ID (or set AWS_ACCESS_KEY_ID env var)")
     parser.add_argument("--aws-secret", default=None, help="AWS Secret Access Key (or set AWS_SECRET_ACCESS_KEY env var)")
     parser.add_argument("--aws-token", default=None, help="AWS Session Token (optional)")
 
     args = parser.parse_args()
 
-    # Resolve AWS credentials
-    aws_key = args.aws_key or os.environ.get("AWS_ACCESS_KEY_ID", "")
-    aws_secret = args.aws_secret or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    aws_token = args.aws_token or os.environ.get("AWS_SESSION_TOKEN")
+    # Resolve AWS credentials: CLI flags > env vars > .env file
+    env_file = _load_env_file()
+    aws_key = args.aws_key or os.environ.get("AWS_ACCESS_KEY_ID") or env_file.get("AWS_ACCESS_KEY_ID", "")
+    aws_secret = args.aws_secret or os.environ.get("AWS_SECRET_ACCESS_KEY") or env_file.get("AWS_SECRET_ACCESS_KEY", "")
+    aws_token = args.aws_token or os.environ.get("AWS_SESSION_TOKEN") or env_file.get("AWS_SESSION_TOKEN")
 
     if not aws_key or not aws_secret:
         print("ERROR: AWS credentials required.")
-        print("  Pass --aws-key and --aws-secret, or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY env vars.")
+        print("  Option 1: Add to .env file in project root:")
+        print("    AWS_ACCESS_KEY_ID=your_key")
+        print("    AWS_SECRET_ACCESS_KEY=your_secret")
+        print("  Option 2: Export as environment variables")
+        print("  Option 3: Pass --aws-key and --aws-secret flags")
         raise SystemExit(1)
+
+    source = "CLI flags" if args.aws_key else (".env file" if env_file.get("AWS_ACCESS_KEY_ID") else "environment variables")
+    print(f"Using AWS credentials from: {source}")
 
     start_date = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     end_date = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -466,10 +430,8 @@ or via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.""",
     t0 = time.time()
 
     paths = download_s3_range(
-        symbol=args.symbol,
         start_date=start_date,
         end_date=end_date,
-        interval=args.interval,
         aws_access_key_id=aws_key,
         aws_secret_access_key=aws_secret,
         aws_session_token=aws_token,
@@ -482,11 +444,7 @@ or via AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY environment variables.""",
 
     if paths:
         total_size = sum(p.stat().st_size for p in paths if p.exists())
-        print(f"Total output size: {_fmt_bytes(total_size)}")
-        print("\nSaved files:")
-        for p in paths:
-            sz = p.stat().st_size if p.exists() else 0
-            print(f"  {p}  ({_fmt_bytes(sz)})")
+        print(f"Total source data on disk: {_fmt_bytes(total_size)}")
 
 
 if __name__ == "__main__":
