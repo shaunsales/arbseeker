@@ -239,8 +239,8 @@ def list_all_data() -> dict:
     for venue_path in DATA_DIR.iterdir():
         if not venue_path.is_dir() or venue_path.name.startswith("."):
             continue
-        # Skip raw source files — not browsable OHLCV data
-        if venue_path.name == "sources":
+        # Skip non-venue directories
+        if venue_path.name in ("sources", "basis"):
             continue
         venue = venue_path.name
         result[venue] = {}
