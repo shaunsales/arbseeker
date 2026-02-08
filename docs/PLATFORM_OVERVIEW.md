@@ -1,6 +1,6 @@
 # Backtesting Platform Overview
 
-A modular Python framework for strategy backtesting with support for single-asset and multi-legged strategies.
+A modular Python platform for cross-venue basis arbitrage research, backtesting, and data management. Includes a web-based UI and support for single-asset, multi-legged, and basis strategies.
 
 ---
 
@@ -8,28 +8,38 @@ A modular Python framework for strategy backtesting with support for single-asse
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
+│                          WEB APP LAYER                                    │
+│  FastAPI + HTMX 2.0 + Alpine.js                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │ Data Browser  │  │ Basis Builder│  │ Backtest     │                  │
+│  │ • Tree view   │  │ • Multi-venue│  │ • Run strats │                  │
+│  │ • Download    │  │ • Spread calc│  │ • View results│                 │
+│  │ • Preview     │  │ • Chart/save │  │              │                  │
+│  └──────────────┘  └──────────────┘  └──────────────┘                  │
+├─────────────────────────────────────────────────────────────────────────┤
 │                           DATA LAYER                                     │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Downloaders              Storage                   Loader              │
 │  ┌─────────────┐         ┌─────────────┐          ┌─────────────┐      │
-│  │ yahoo.py    │ ──────► │ Parquet     │ ◄─────── │ load_ohlcv()│      │
-│  │ hyperliquid │         │ Files       │          │             │      │
-│  │ .py         │         │ (yearly/    │          │ Handles:    │      │
-│  └─────────────┘         │  monthly)   │          │ - Multi-file│      │
-│                          └─────────────┘          │ - Concat    │      │
-│                                                   │ - Dedup     │      │
-│                                                   └─────────────┘      │
+│  │ binance.py  │ ──────► │ Parquet     │ ◄─────── │ load_ohlcv()│      │
+│  │ hl_s3.py    │         │ Files       │          │             │      │
+│  │ hl_build.py │         │ (monthly)   │          │ Handles:    │      │
+│  └─────────────┘         └─────────────┘          │ - Multi-file│      │
+│                                                   │ - Concat    │      │
+│  ┌─────────────┐         ┌─────────────┐          │ - Dedup     │      │
+│  │ basis.py    │ ──────► │ Basis Files │          └─────────────┘      │
+│  └─────────────┘         └─────────────┘                               │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                          STRATEGY LAYER                                  │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  ┌───────────────────────┐    ┌───────────────────────┐                │
-│  │ SingleAssetStrategy   │    │ MultiLeggedStrategy   │                │
-│  │ ───────────────────── │    │ ───────────────────── │                │
-│  │ • One asset           │    │ • Multiple assets     │                │
-│  │ • Long/Short          │    │ • Simultaneous pos    │                │
-│  │ • required_indicators │    │ • required_data()     │                │
-│  │ • on_bar() → Signal   │    │ • on_bar() → Signals  │                │
-│  └───────────────────────┘    └───────────────────────┘                │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
+│  │ SingleAsset     │  │ MultiLegged     │  │ BasisStrategy   │        │
+│  │ ─────────────── │  │ ─────────────── │  │ ─────────────── │        │
+│  │ • One asset     │  │ • Multiple legs │  │ • Pre-computed  │        │
+│  │ • Long/Short    │  │ • Simultaneous  │  │   basis files   │        │
+│  │ • on_bar()      │  │ • on_bar()      │  │ • Spread arb    │        │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                          ENGINE LAYER                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -71,16 +81,19 @@ data/{venue}/{market}/{ticker}/{interval}/{period}.parquet
 
 | Component | Description | Examples |
 |-----------|-------------|----------|
-| `venue` | Data source | `yahoo`, `hyperliquid`, `binance` |
-| `market` | Market type | `futures`, `spot`, `perp` |
-| `ticker` | Symbol | `GC=F`, `BTCUSDT`, `PAXG` |
-| `interval` | Bar size | `1m`, `15m`, `1h`, `1d` |
+| `venue` | Data source | `binance`, `hyperliquid` |
+| `market` | Market type | `futures`, `perp`, `spot` |
+| `ticker` | Symbol | `BTCUSDT`, `BTC-USD`, `PAXG-USD` |
+| `interval` | Bar size | `1m`, `1h`, `1d` |
 | `period` | Time range | `2024` (year), `2024-10` (month) |
 
 **Example paths:**
 ```
-data/yahoo/futures/GC=F/15m/2025-12.parquet
-data/hyperliquid/perp/PAXG/15m/2025-12.parquet
+data/binance/futures/BTCUSDT/1h/2025-07.parquet
+data/binance/futures/PAXGUSDT/1m/2025-10.parquet
+data/hyperliquid/perp/BTC-USD/1h/2025-12.parquet
+data/hyperliquid/perp/PAXG-USD/1m/2025-10.parquet
+data/basis/PAXG/1h/2025-10.parquet
 ```
 
 ### 1.2 DataFrame Schema
@@ -89,16 +102,18 @@ All OHLCV data uses a consistent schema:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `index` | `DatetimeIndex` (UTC) | Bar timestamp |
+| `index` | `DatetimeIndex` (UTC), name=`open_time` | Bar open timestamp |
 | `open` | `float64` | Open price |
 | `high` | `float64` | High price |
 | `low` | `float64` | Low price |
 | `close` | `float64` | Close price |
 | `volume` | `float64` | Volume |
 
-Optional columns (added by downloaders):
-- `market_open`: `bool` - Whether market is open
-- `near_close`: `bool` - Whether market is closing soon (for auto-close logic)
+Optional columns (venue-dependent):
+- `market_open`: `bool` - Whether market is open (always True for 24/7 crypto)
+- `quote_volume`: `float64` - Volume in quote currency (Binance only)
+- `count`: `int` - Number of trades in bar (Binance only)
+- `taker_buy_volume`: `float64` - Taker buy volume (Binance only)
 
 ### 1.3 Core Functions
 
@@ -126,13 +141,39 @@ all_data = list_all_data()
 
 | Module | Source | Assets |
 |--------|--------|--------|
-| `core/data/yahoo.py` | Yahoo Finance | Futures (GC=F, CL=F), Stocks |
-| `core/data/hyperliquid.py` | Hyperliquid API | Perpetuals (PAXG, BTC, ETH) |
+| `core/data/binance.py` | Binance Vision | Futures klines (BTCUSDT, PAXGUSDT, etc.) |
+| `core/data/hyperliquid_s3.py` | Hyperliquid S3 | Raw hourly LZ4 trade fills |
+| `core/data/hyperliquid_build.py` | Local LZ4 files | Per-symbol OHLCV Parquet builder |
+| `core/data/basis.py` | Local Parquets | Cross-venue basis spread computation |
 
-Each downloader follows the pattern:
+#### Binance Pipeline
+```bash
+python -m core.data.binance --symbol BTCUSDT --start 2025-07 --end 2026-01
+```
+Downloads monthly OHLCV klines from Binance Vision. Supports 1m, 1h, 1d intervals.
+
+#### Hyperliquid Pipeline (two-stage)
+```bash
+# Stage 1: Download raw hourly LZ4 trade fills from S3
+python -m core.data.hyperliquid_s3 --start 2025-10-01 --end 2025-12-31
+
+# Stage 2: Build per-symbol OHLCV parquets
+python -m core.data.hyperliquid_build              # default symbols from config
+python -m core.data.hyperliquid_build --symbol ALL  # extract all symbols
+python -m core.data.hyperliquid_build --cleanup     # delete LZ4 after build
+```
+
+The builder reads `core/data/hyperliquid_symbols.json` for the default symbol list (20 top-liquidity perps). It processes month-by-month for memory efficiency, skips existing parquets unless `--force` is used, and can `--cleanup` source LZ4 files after completion.
+
+#### Basis Builder
 ```python
-df = download_{source}_month(ticker, year, month, interval)
-save_monthly(df, venue, market, ticker, interval, year, month)
+from core.data.basis import create_basis_file, BasisSpec
+spec = BasisSpec(
+    base_venue="binance", base_market="futures", base_ticker="PAXGUSDT",
+    quote_venues=[{"venue": "hyperliquid", "market": "perp", "ticker": "PAXG-USD", "name": "hl"}],
+    interval="1h", periods=["2025-10", "2025-11", "2025-12"],
+)
+df, result = create_basis_file(spec)
 ```
 
 ---
@@ -618,11 +659,21 @@ result.print_report()
 
 | Module | Purpose |
 |--------|---------|
-| `core/data/storage.py` | Parquet I/O, `load_ohlcv()`, `save_ohlcv()` |
-| `core/data/yahoo.py` | Yahoo Finance downloader |
-| `core/data/hyperliquid.py` | Hyperliquid API downloader |
-| `core/data/market_hours.py` | CME market hours, near-close detection |
+| `core/data/storage.py` | Parquet I/O, `load_ohlcv()`, `save_ohlcv()`, `get_data_path()` |
+| `core/data/binance.py` | Binance Vision monthly klines downloader |
+| `core/data/hyperliquid_s3.py` | Hyperliquid S3 raw LZ4 trade downloader |
+| `core/data/hyperliquid_build.py` | LZ4-to-OHLCV Parquet builder (month-by-month) |
+| `core/data/hyperliquid_symbols.json` | Top-liquidity Hyperliquid perp symbol config |
+| `core/data/basis.py` | Basis file builder (`create_basis_file()`, `load_basis()`) |
+| `core/data/market_hours.py` | Market hours, near-close detection |
+| `core/data/validator.py` | OHLCV validation, gap filling, coverage metrics |
 | `core/indicators/indicators.py` | pandas-ta wrapper, `compute_indicators()` |
 | `core/strategy/base.py` | `SingleAssetStrategy`, `MultiLeggedStrategy`, `DataSpec`, `StrategyConfig` |
+| `core/strategy/basis_strategy.py` | `BasisStrategy`, `BasisPosition`, `BasisSignal` |
 | `core/strategy/position.py` | `Position`, `Trade`, `Signal`, `CostModel` |
 | `core/strategy/engine.py` | `BacktestEngine`, `BacktestResult` |
+| `app/main.py` | FastAPI web application entry point |
+| `app/routes/data.py` | Data browser, download, preview routes |
+| `app/routes/basis.py` | Basis file builder UI routes |
+| `app/routes/backtest.py` | Backtest runner UI routes |
+| `run_app.py` | Web app launcher |

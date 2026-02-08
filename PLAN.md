@@ -11,24 +11,29 @@ See `README.md` for quick start and `docs/PLATFORM_OVERVIEW.md` for architecture
 - [x] Core framework (`core/data`, `core/strategy`, `core/indicators`)
 - [x] BasisArbitrage strategy with parameter optimization
 - [x] HTML report generator (`scripts/generate_basis_report.py`)
-- [x] Hyperliquid S3 trade downloader (`scripts/download_hl_trades.py`)
-- [x] Remove legacy files (1_data_acquisition.py, 1_generate_reports.py, 2_basis_analysis.py, 3_visualization.py, 4_backtest.py, validate_basis.py, test_connections.py)
+- [x] Hyperliquid S3 trade downloader (`core/data/hyperliquid_s3.py`)
+- [x] Hyperliquid LZ4-to-OHLCV builder (`core/data/hyperliquid_build.py`)
+- [x] Binance Vision klines downloader (`core/data/binance.py`)
+- [x] Web app (FastAPI + HTMX 2.0 + Alpine.js)
+- [x] Remove legacy files
 
 ---
 
-## Phase 1: Data Layer Standardization
+## Phase 1: Data Layer Standardization ✅
 
 ### 1.1 Standardize Raw OHLCV Schema ✅
 ```
+Index: open_time (DatetimeIndex, UTC)
+
 Columns (required):
-- timestamp (DatetimeIndex, UTC) - bar open time, aligned to within 1 second
 - open, high, low, close (float64)
 - volume (float64)
 
 Columns (optional):
 - market_open (bool) - True if market is open at this bar
-- trades (int) - number of trades in bar
 - quote_volume (float64) - volume in quote currency
+- count (int) - number of trades in bar
+- taker_buy_volume (float64) - taker buy volume
 
 Computed at runtime (NOT stored):
 - near_close - compute from market_open transitions
@@ -41,16 +46,27 @@ Computed at runtime (NOT stored):
 - [x] Show data quality metrics (gaps, coverage %, bar count)
 - [x] Downloadable CSV/Parquet export buttons
 - [x] Chart/Table tabs with paginated data table
+- [x] HTMX 2.0 + Alpine.js migration with loading indicators
 
 ### 1.3 Update Downloaders ✅
-- [x] Standardize output format across all downloaders (yahoo, hyperliquid, binance)
-- [x] Remove `near_close` computation from Yahoo
-- [x] Add `market_open` to Binance (24/7 = always True)
+- [x] Binance Vision monthly klines downloader (`core/data/binance.py`)
+- [x] Hyperliquid S3 raw LZ4 trade downloader (`core/data/hyperliquid_s3.py`)
+- [x] Hyperliquid LZ4-to-OHLCV Parquet builder (`core/data/hyperliquid_build.py`)
+- [x] Top-liquidity symbol config (`core/data/hyperliquid_symbols.json`)
+- [x] Memory-efficient month-by-month processing
+- [x] Skip-if-exists logic for output parquets
+- [x] `--cleanup` flag to delete LZ4 sources after build
+- [x] Add `market_open` to all venues (24/7 = always True for crypto)
+- [x] Consistent `open_time` index name across all venues
 - [x] All timestamps aligned to UTC bar open time
+
+### 1.4 Data Validation ✅
+- [x] `core/data/validator.py` - OHLCV validation & gap filling
+- [x] Coverage %, gap detection, bar count metrics
 
 ---
 
-## Phase 2: Basis Files
+## Phase 2: Basis Files ✅
 
 ### 2.1 Basis Data Schema ✅
 Pre-computed basis data with one base venue and multiple quote venues:
@@ -59,7 +75,7 @@ Pre-computed basis data with one base venue and multiple quote venues:
 Path: data/basis/{base_ticker}/{interval}/{period}.parquet
 
 Columns:
-- timestamp (DatetimeIndex, UTC) - aligned to bar open within 1 second
+- open_time (DatetimeIndex, UTC) - aligned to bar open within 1 second
 - base_price (float64) - open price from base venue
 - {quote_venue}_price (float64) - open price from each quote venue
 - {quote_venue}_basis_abs (float64) - quote_price - base_price
@@ -68,7 +84,7 @@ Columns:
 ```
 
 ### 2.2 Basis Builder Tool ✅
-New module: `core/data/basis.py` with `create_basis_file()` function.
+Module: `core/data/basis.py` with `create_basis_file()` function.
 - Flexible period loading (handles yearly vs monthly format mismatches)
 - `load_basis()` and `list_basis_files()` utilities
 
@@ -127,7 +143,9 @@ Bar-by-bar output: `output/backtests/{strategy_name}_{timestamp}.parquet`
 |-------|-------------|
 | 0 | ✅ Delete legacy files, update PLAN.md |
 | 1.1 | ✅ Standardize OHLCV schema |
-| 1.2 | ✅ Web app pagination + filters + TradingView charts |
+| 1.2 | ✅ Web app data browser + TradingView charts + HTMX 2.0 |
+| 1.3 | ✅ Binance + Hyperliquid data pipelines |
+| 1.4 | ✅ Data validation |
 | 2.1-2.2 | ✅ Basis file schema + builder |
 | 2.3 | ✅ Web app basis builder UI |
 | 2.4 | ✅ BasisStrategy class |
