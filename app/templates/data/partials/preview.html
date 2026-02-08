@@ -3,7 +3,16 @@
     <div class="flex items-center justify-between mb-4">
         <div>
             <h2 class="text-xl font-bold">{{ ticker }} / {{ interval }}</h2>
-            <p class="text-gray-400 text-sm">{{ venue }} {{ market }} | Periods: {{ selected_periods | length }}</p>
+            <div class="flex items-center gap-3 mt-1">
+                <span class="text-gray-400 text-sm">{{ venue }} {{ market }}</span>
+                <span class="text-gray-600">|</span>
+                <span class="text-sm font-mono">
+                    <span class="text-white font-medium">{{ summary.start[:10] }}</span>
+                    <span class="text-gray-500 mx-1">&rarr;</span>
+                    <span class="text-white font-medium">{{ summary.end[:10] }}</span>
+                    <span class="text-gray-500 ml-1">({{ summary.days }}d)</span>
+                </span>
+            </div>
         </div>
         <div class="flex items-center gap-2">
             <span class="px-2 py-1 bg-green-900 text-green-300 text-xs rounded">
@@ -89,9 +98,6 @@
     <div id="view-chart">
         <div id="price-chart" class="bg-gray-900 rounded" style="height: 400px;"></div>
         <div id="volume-chart" class="bg-gray-900 rounded mt-2" style="height: 120px;"></div>
-        <div class="mt-4 text-sm text-gray-400 text-center">
-            {{ summary.start[:10] }} to {{ summary.end[:10] }}
-        </div>
     </div>
     
     <!-- Table View -->

@@ -3,94 +3,25 @@
 {% set active_tab = "data" %}
 {% block title %}Data Browser - Strategy Lab{% endblock %}
 
+{% block main_class %}flex h-[calc(100vh-3.5rem)]{% endblock %}
+
 {% block content %}
-<div class="flex gap-6">
-    <!-- Sidebar: Tabbed Browse/Download -->
-    <div class="w-80 flex-shrink-0">
-        <div class="bg-gray-800 rounded-lg border border-gray-700">
-            <!-- Tabs -->
-            <div class="flex border-b border-gray-700">
-                <button id="sidebar-tab-browse" onclick="showSidebarTab('browse')" 
-                        class="flex-1 px-4 py-3 text-sm font-medium border-b-2 border-blue-500 text-blue-400">
-                    Browse
-                </button>
-                <button id="sidebar-tab-download" onclick="showSidebarTab('download')" 
-                        class="flex-1 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300">
-                    Download
-                </button>
-            </div>
-            
-            <!-- Browse Tab (Data Tree) -->
-            <div id="sidebar-browse" class="p-4">
-                <div id="data-tree" hx-get="/data/tree" hx-trigger="load" hx-swap="innerHTML">
-                    <div class="text-gray-500 text-sm">Loading...</div>
-                </div>
-            </div>
-            
-            <!-- Download Tab -->
-            <div id="sidebar-download" class="p-4 hidden">
-                <form id="download-form" class="space-y-3">
-                    <input type="hidden" name="venue" value="binance">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Ticker</label>
-                        <input type="text" name="ticker" id="ticker-input" value="BTCUSDT" 
-                               class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">Interval</label>
-                        <select name="interval" id="interval-select" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                            {% for interval in intervals %}
-                            <option value="{{ interval }}" {% if interval == "1h" %}selected{% endif %}>{{ interval }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div id="market-group">
-                        <label class="block text-sm text-gray-400 mb-1">Market</label>
-                        <select name="market" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                            <option value="futures" selected>USDM Futures</option>
-                            <option value="spot">Spot</option>
-                        </select>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">Start Month</label>
-                            <input type="month" name="start_month" value="2025-01"
-                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm text-gray-400 mb-1">End Month</label>
-                            <input type="month" name="end_month" value="2025-12"
-                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                        </div>
-                    </div>
-                    <button type="submit" 
-                            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition">
-                        Download
-                    </button>
-                </form>
-                
-                <!-- Download Progress -->
-                <div id="download-progress" class="hidden mt-3">
-                    <div class="flex items-center justify-between text-sm mb-1">
-                        <span id="download-status" class="text-gray-400">Downloading...</span>
-                        <span id="download-percent" class="text-blue-400">0%</span>
-                    </div>
-                    <div class="w-full bg-gray-700 rounded-full h-2">
-                        <div id="download-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width: 0%"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
+<!-- Sidebar -->
+<aside class="w-72 flex-shrink-0 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+        <span class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Data Browser</span>
     </div>
-    
-    <!-- Main: Data Preview -->
-    <div class="flex-1">
-        <div id="data-preview" class="bg-gray-800 rounded-lg p-6 border border-gray-700 min-h-[600px]">
-            <div class="text-center text-gray-500 py-12">
-                <div class="text-4xl mb-3">📊</div>
-                <p>Select data from the tree to preview</p>
-                <p class="text-sm mt-2">Or download new data using the form</p>
-            </div>
+    <div class="flex-1 overflow-y-auto p-3" id="data-tree" hx-get="/data/tree" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-gray-500 text-sm px-2">Loading...</div>
+    </div>
+</aside>
+
+<!-- Main: Data Preview -->
+<div class="flex-1 overflow-y-auto p-6">
+    <div id="data-preview" class="max-w-6xl mx-auto">
+        <div class="text-center text-gray-500 py-20">
+            <div class="text-4xl mb-3">📊</div>
+            <p>Select a dataset from the tree to preview</p>
         </div>
     </div>
 </div>
@@ -98,88 +29,44 @@
 
 {% block scripts %}
 <script>
-// Sidebar tab switching
-function showSidebarTab(tab) {
-    document.getElementById('sidebar-browse').classList.toggle('hidden', tab !== 'browse');
-    document.getElementById('sidebar-download').classList.toggle('hidden', tab !== 'download');
-    document.getElementById('sidebar-tab-browse').classList.toggle('border-blue-500', tab === 'browse');
-    document.getElementById('sidebar-tab-browse').classList.toggle('text-blue-400', tab === 'browse');
-    document.getElementById('sidebar-tab-browse').classList.toggle('border-transparent', tab !== 'browse');
-    document.getElementById('sidebar-tab-browse').classList.toggle('text-gray-400', tab !== 'browse');
-    document.getElementById('sidebar-tab-download').classList.toggle('border-blue-500', tab === 'download');
-    document.getElementById('sidebar-tab-download').classList.toggle('text-blue-400', tab === 'download');
-    document.getElementById('sidebar-tab-download').classList.toggle('border-transparent', tab !== 'download');
-    document.getElementById('sidebar-tab-download').classList.toggle('text-gray-400', tab !== 'download');
+// Toggle collapsible tree nodes
+function toggleNode(el) {
+    const children = el.nextElementSibling;
+    const chevron = el.querySelector('.chevron');
+    if (children) {
+        children.classList.toggle('hidden');
+        if (chevron) {
+            chevron.textContent = children.classList.contains('hidden') ? '▶' : '▼';
+        }
+    }
 }
 
-// Download form handler
-document.getElementById('download-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const form = e.target;
-    const data = {
-        venue: 'binance',
-        market: form.market.value,
-        ticker: form.ticker.value.toUpperCase(),
-        interval: form.interval.value,
-        start_month: form.start_month.value,
-        end_month: form.end_month.value,
-    };
-    
-    // Show progress
-    const progressDiv = document.getElementById('download-progress');
-    const statusEl = document.getElementById('download-status');
-    const percentEl = document.getElementById('download-percent');
-    const barEl = document.getElementById('download-bar');
-    
-    progressDiv.classList.remove('hidden');
-    barEl.className = 'bg-blue-600 h-2 rounded-full transition-all';
-    statusEl.textContent = 'Starting...';
-    percentEl.textContent = '0%';
-    barEl.style.width = '0%';
-    
-    try {
-        const response = await fetch('/data/download', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
-        
-        const result = await response.json();
-        const jobId = result.job_id;
-        
-        // Poll for status
-        const poll = async () => {
-            const statusResponse = await fetch(`/data/download/status/${jobId}`);
-            const status = await statusResponse.json();
-            
-            statusEl.textContent = status.message || 'Downloading...';
-            percentEl.textContent = `${status.progress}%`;
-            barEl.style.width = `${status.progress}%`;
-            
-            if (status.status === 'running') {
-                setTimeout(poll, 500);
-            } else if (status.status === 'complete') {
-                statusEl.textContent = 'Complete!';
-                barEl.className = 'bg-green-600 h-2 rounded-full transition-all';
-                htmx.trigger('#data-tree', 'load');
-                setTimeout(() => progressDiv.classList.add('hidden'), 3000);
-            } else if (status.status === 'error') {
-                statusEl.textContent = `Error: ${status.message}`;
-                barEl.className = 'bg-red-600 h-2 rounded-full transition-all';
-            }
-        };
-        poll();
-    } catch (err) {
-        statusEl.textContent = `Error: ${err.message}`;
-        barEl.classList.add('bg-red-600');
-    }
-});
-
-// Load preview when clicking on data item
+// Load preview: all months for an interval
 function loadPreview(venue, market, ticker, interval) {
     const url = `/data/preview/${venue}/${market}/${ticker}/${interval}`;
     htmx.ajax('GET', url, '#data-preview');
+    highlightActive(venue, market, ticker, interval, null);
+}
+
+// Load preview: single month
+function loadMonth(venue, market, ticker, interval, period) {
+    const url = `/data/preview/${venue}/${market}/${ticker}/${interval}?periods=${period}`;
+    htmx.ajax('GET', url, '#data-preview');
+    highlightActive(venue, market, ticker, interval, period);
+}
+
+// Highlight the active item
+function highlightActive(venue, market, ticker, interval, period) {
+    document.querySelectorAll('.tree-item-active').forEach(el => {
+        el.classList.remove('tree-item-active', 'bg-gray-700');
+    });
+    const id = period
+        ? `month-${venue}-${market}-${ticker}-${interval}-${period}`
+        : `interval-${venue}-${market}-${ticker}-${interval}`;
+    const el = document.getElementById(id);
+    if (el) {
+        el.classList.add('tree-item-active', 'bg-gray-700');
+    }
 }
 </script>
 {% endblock %}

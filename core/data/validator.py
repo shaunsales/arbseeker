@@ -309,6 +309,7 @@ def get_data_summary(df: pd.DataFrame) -> dict:
         "bars": len(df),
         "start": df.index.min().isoformat(),
         "end": df.index.max().isoformat(),
+        "days": (df.index.max() - df.index.min()).days + 1,
         "open_price": float(df["open"].iloc[0]),
         "close_price": float(df["close"].iloc[-1]),
         "high_price": float(df["high"].max()),

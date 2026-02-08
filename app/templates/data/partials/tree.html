@@ -1,39 +1,72 @@
+{% set market_labels = {
+    'futures': 'USDM Futures',
+    'spot': 'Spot',
+    'perp': 'Perp',
+} %}
+
 {% if data_tree %}
-<div class="space-y-2 text-sm">
+<div class="text-sm select-none">
     {% for venue, markets in data_tree.items() %}
     {% if markets %}
-    <div class="tree-venue">
-        <div class="font-medium text-gray-300">📁 {{ venue }}</div>
-        {% for market, tickers in markets.items() %}
-        {% if tickers %}
-        <div class="ml-4 mt-1">
-            <div class="text-gray-400">└─ {{ market }}</div>
+    {% for market, tickers in markets.items() %}
+    {% if tickers %}
+    {# --- Venue + Market node (top level) --- #}
+    <div class="mb-1">
+        <div onclick="toggleNode(this)"
+             class="flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-700 cursor-pointer">
+            <span class="chevron text-gray-500 text-xs w-3">▼</span>
+            <span class="text-gray-300 font-semibold capitalize">{{ venue }}</span>
+            <span class="text-gray-500 text-xs">({{ market_labels.get(market, market) }})</span>
+        </div>
+        <div class="ml-3">
             {% for ticker, intervals in tickers.items() %}
             {% if intervals %}
-            <div class="ml-4">
-                <div class="text-gray-400">└─ {{ ticker }}</div>
-                {% for interval, years in intervals.items() %}
-                <div class="ml-4">
-                    <button onclick="loadPreview('{{ venue }}', '{{ market }}', '{{ ticker }}', '{{ interval }}')"
-                            class="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
-                        └─ {{ interval }}/ 
-                        <span class="text-gray-500">[{{ years | join(', ') }}]</span>
-                    </button>
+            {# --- Ticker node --- #}
+            <div class="mb-0.5">
+                <div onclick="toggleNode(this)"
+                     class="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-700 cursor-pointer">
+                    <span class="chevron text-gray-500 text-xs w-3">▶</span>
+                    <span class="text-gray-200 font-medium">{{ ticker }}</span>
                 </div>
-                {% endfor %}
+                <div class="ml-3 hidden">
+                    {% for interval, periods in intervals.items() %}
+                    {# --- Interval node --- #}
+                    <div class="mb-0.5">
+                        <div onclick="toggleNode(this)"
+                             class="flex items-center gap-1.5 rounded hover:bg-gray-700 cursor-pointer group">
+                            <span class="chevron text-gray-500 text-xs w-3 py-1 pl-2">▶</span>
+                            <button id="interval-{{ venue }}-{{ market }}-{{ ticker }}-{{ interval }}"
+                                    onclick="event.stopPropagation(); loadPreview('{{ venue }}','{{ market }}','{{ ticker }}','{{ interval }}')"
+                                    class="text-blue-400 hover:text-blue-300 font-medium py-1 pr-2">
+                                {{ interval }}
+                            </button>
+                            <span class="text-gray-600 text-xs">{{ periods | length }} mo</span>
+                        </div>
+                        <div class="ml-5 hidden">
+                            {% for period in periods %}
+                            <button id="month-{{ venue }}-{{ market }}-{{ ticker }}-{{ interval }}-{{ period }}"
+                                    onclick="loadMonth('{{ venue }}','{{ market }}','{{ ticker }}','{{ interval }}','{{ period }}')"
+                                    class="block w-full text-left px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 text-xs font-mono">
+                                {{ period }}
+                            </button>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
             {% endif %}
             {% endfor %}
         </div>
-        {% endif %}
-        {% endfor %}
     </div>
+    {% endif %}
+    {% endfor %}
     {% endif %}
     {% endfor %}
 </div>
 {% else %}
-<div class="text-gray-500 text-sm">
+<div class="text-gray-500 text-sm px-2">
     <p>No data downloaded yet.</p>
-    <p class="mt-2">Use the form above to download data.</p>
+    <p class="mt-1 text-xs">Download data via the CLI tools.</p>
 </div>
 {% endif %}
