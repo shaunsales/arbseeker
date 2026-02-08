@@ -283,3 +283,100 @@ def download_binance_range(
             paths.append(path)
     
     return paths
+
+
+def _fmt_bytes(n: int) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def main():
+    """CLI entry point for downloading Binance Vision data."""
+    import argparse
+    import time
+
+    current_year = datetime.now(timezone.utc).year
+
+    parser = argparse.ArgumentParser(
+        description="Download Binance Vision USDM futures klines and save as yearly OHLCV parquet.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""Examples:
+  python -m core.data.binance --symbol BTCUSDT --year 2025
+  python -m core.data.binance --symbol ETHUSDT --start-year 2023 --end-year 2025
+  python -m core.data.binance --symbol SOLUSDT --year 2025 --intervals 1h,1d
+
+Data is downloaded from https://data.binance.vision/ (no API key required).
+Files are saved to: data/binance/futures/{{SYMBOL}}/{{interval}}/{{year}}.parquet""",
+    )
+    parser.add_argument("--symbol", "-s", required=True, help="Trading pair (e.g. BTCUSDT, ETHUSDT)")
+    parser.add_argument("--year", "-y", type=int, default=None, help="Single year to download")
+    parser.add_argument("--start-year", type=int, default=None, help="Start year for range download")
+    parser.add_argument("--end-year", type=int, default=None, help=f"End year for range download (default: {current_year})")
+    parser.add_argument("--intervals", "-i", default="1m,1h,1d",
+                        help="Comma-separated intervals to download (default: 1m,1h,1d)")
+    parser.add_argument("--market", "-m", default="futures", choices=["futures", "spot"],
+                        help="Market type (default: futures/USDM)")
+    parser.add_argument("--force", action="store_true", help="Re-download even if data already exists")
+
+    args = parser.parse_args()
+
+    # Resolve year range
+    if args.year:
+        start_year = args.year
+        end_year = args.year
+    elif args.start_year:
+        start_year = args.start_year
+        end_year = args.end_year or current_year
+    else:
+        print("ERROR: Specify --year or --start-year")
+        raise SystemExit(1)
+
+    # Parse and validate intervals
+    intervals = [i.strip() for i in args.intervals.split(",") if i.strip()]
+    for iv in intervals:
+        if iv not in INTERVALS:
+            print(f"ERROR: Invalid interval '{iv}'. Valid: {', '.join(INTERVALS)}")
+            raise SystemExit(1)
+
+    symbol = args.symbol.upper()
+    years = list(range(start_year, end_year + 1))
+
+    print(f"Downloading {symbol} from Binance Vision")
+    print(f"Years: {start_year}–{end_year} | Intervals: {', '.join(intervals)} | Market: {args.market}")
+    print()
+
+    t0 = time.time()
+    all_paths = []
+
+    for interval in intervals:
+        print(f"=== {interval} ===")
+        for year in years:
+            path = download_binance_year(
+                symbol=symbol,
+                interval=interval,
+                year=year,
+                market=args.market,
+                force=args.force,
+            )
+            if path:
+                all_paths.append(path)
+        print()
+
+    elapsed = time.time() - t0
+    print(f"Done! Elapsed: {elapsed:.0f}s")
+
+    if all_paths:
+        total_size = sum(p.stat().st_size for p in all_paths if p.exists())
+        print(f"Total output: {len(all_paths)} file(s), {_fmt_bytes(total_size)}")
+        print("\nSaved files:")
+        for p in all_paths:
+            sz = p.stat().st_size if p.exists() else 0
+            print(f"  {p}  ({_fmt_bytes(sz)})")
+
+
+if __name__ == "__main__":
+    main()
