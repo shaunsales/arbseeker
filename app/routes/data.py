@@ -15,8 +15,8 @@ from pydantic import BaseModel
 import pandas as pd
 import io
 
-from core.data.storage import list_all_data, load_ohlcv, list_available_years, list_available_periods, delete_period, clear_all_data, get_data_path
-from core.data.binance import download_binance_year, list_binance_symbols, INTERVALS
+from core.data.storage import list_all_data, load_ohlcv, list_available_periods, delete_period, clear_all_data, get_data_path
+from core.data.binance import download_binance_months, list_binance_symbols, INTERVALS
 from core.data.validator import validate_ohlcv, get_data_summary
 
 router = APIRouter()
@@ -32,7 +32,8 @@ class DownloadRequest(BaseModel):
     market: str = "futures"
     ticker: str
     interval: str
-    year: Optional[int] = None
+    start_month: str
+    end_month: str
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -153,7 +154,7 @@ async def data_preview(
 @router.post("/download")
 async def download_data(request: DownloadRequest, background_tasks: BackgroundTasks):
     """Start a data download job."""
-    job_id = f"binance_{request.ticker}_{request.interval}_{request.year}"
+    job_id = f"binance_{request.ticker}_{request.interval}_{request.start_month}_{request.end_month}"
     
     # Check if already downloading
     if job_id in download_jobs and download_jobs[job_id]["status"] == "running":
@@ -171,7 +172,8 @@ async def download_data(request: DownloadRequest, background_tasks: BackgroundTa
         job_id,
         request.ticker,
         request.interval,
-        request.year,
+        request.start_month,
+        request.end_month,
         request.market,
     )
     
@@ -200,20 +202,21 @@ async def get_symbols(market: str = "futures"):
     return {"symbols": symbols}
 
 
-async def _download_binance_task(job_id: str, ticker: str, interval: str, year: int, market: str):
+async def _download_binance_task(job_id: str, ticker: str, interval: str, start_month: str, end_month: str, market: str):
     """Background task for downloading Binance data."""
-    def progress_callback(month: int, total: int, message: str):
+    def progress_callback(current: int, total: int, message: str):
         download_jobs[job_id] = {
             "status": "running",
-            "progress": int((month / total) * 100),
+            "progress": int((current / total) * 100),
             "message": message,
         }
     
     try:
-        path = download_binance_year(
+        paths = download_binance_months(
             symbol=ticker,
             interval=interval,
-            year=year,
+            start_month=start_month,
+            end_month=end_month,
             market=market,
             progress_callback=progress_callback,
         )
@@ -221,8 +224,7 @@ async def _download_binance_task(job_id: str, ticker: str, interval: str, year: 
         download_jobs[job_id] = {
             "status": "complete",
             "progress": 100,
-            "message": f"Saved to {path}" if path else "No data available",
-            "path": str(path) if path else None,
+            "message": f"Saved {len(paths)} month(s)" if paths else "No data available",
         }
     except Exception as e:
         download_jobs[job_id] = {

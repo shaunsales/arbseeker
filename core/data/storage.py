@@ -104,18 +104,6 @@ def save_ohlcv(
     return file_path
 
 
-def save_yearly(
-    df: pd.DataFrame,
-    venue: str,
-    market: str,
-    ticker: str,
-    interval: str,
-    year: int,
-) -> Path:
-    """Save OHLCV data for a specific year. Wrapper for save_ohlcv."""
-    return save_ohlcv(df, venue, market, ticker, interval, str(year))
-
-
 def save_monthly(
     df: pd.DataFrame,
     venue: str,
@@ -234,24 +222,6 @@ def list_available_periods(
             periods.append(period)
     
     return _sort_periods(periods)
-
-
-def list_available_years(
-    venue: str,
-    market: str,
-    ticker: str,
-    interval: str,
-) -> list[int]:
-    """
-    List all available full years for a given data path.
-    Backward compatible - only returns year files, not monthly.
-    
-    Returns:
-        Sorted list of years with data
-    """
-    periods = list_available_periods(venue, market, ticker, interval)
-    years = [int(p) for p in periods if re.match(r"^\d{4}$", p)]
-    return sorted(years)
 
 
 def list_all_data() -> dict:

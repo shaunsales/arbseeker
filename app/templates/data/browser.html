@@ -51,13 +51,17 @@
                             <option value="spot">Spot</option>
                         </select>
                     </div>
-                    <div id="year-group">
-                        <label class="block text-sm text-gray-400 mb-1">Year</label>
-                        <select name="year" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                            {% for year in range(2020, 2027) %}
-                            <option value="{{ year }}" {% if year == 2025 %}selected{% endif %}>{{ year }}</option>
-                            {% endfor %}
-                        </select>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Start Month</label>
+                            <input type="month" name="start_month" value="2025-01"
+                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">End Month</label>
+                            <input type="month" name="end_month" value="2025-12"
+                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
                     </div>
                     <button type="submit" 
                             class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition">
@@ -118,7 +122,8 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
         market: form.market.value,
         ticker: form.ticker.value.toUpperCase(),
         interval: form.interval.value,
-        year: parseInt(form.year.value),
+        start_month: form.start_month.value,
+        end_month: form.end_month.value,
     };
     
     // Show progress

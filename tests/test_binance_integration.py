@@ -19,7 +19,7 @@ from core.data.binance import (
     KLINE_COLUMNS,
     INTERVALS,
 )
-from core.data.storage import save_yearly, load_ohlcv, list_available_years, get_data_path
+from core.data.storage import save_monthly, load_ohlcv, list_available_periods, get_data_path
 from core.data.validator import validate_ohlcv, fill_gaps, get_data_summary
 
 
@@ -183,15 +183,15 @@ class TestStorageRoundtrip:
             
             try:
                 # Save
-                path = save_yearly(df, "binance", "futures", "BTCUSDT", "1h", 2024)
+                path = save_monthly(df, "binance", "futures", "BTCUSDT", "1h", 2024, 1)
                 assert path.exists(), f"File not created: {path}"
                 
                 # Verify path structure
-                expected_path = Path(tmpdir) / "binance" / "futures" / "BTCUSDT" / "1h" / "2024.parquet"
+                expected_path = Path(tmpdir) / "binance" / "futures" / "BTCUSDT" / "1h" / "2024-01.parquet"
                 assert path == expected_path, f"Path mismatch: {path} != {expected_path}"
                 
                 # Load back
-                df_loaded = load_ohlcv("binance", "futures", "BTCUSDT", "1h", years=[2024])
+                df_loaded = load_ohlcv("binance", "futures", "BTCUSDT", "1h", periods=["2024-01"])
                 
                 # Verify data matches
                 assert len(df_loaded) == len(df), "Row count mismatch"
@@ -200,9 +200,9 @@ class TestStorageRoundtrip:
                 # Verify values match
                 pd.testing.assert_frame_equal(df, df_loaded)
                 
-                # Verify list_available_years
-                years = list_available_years("binance", "futures", "BTCUSDT", "1h")
-                assert years == [2024], f"Expected [2024], got {years}"
+                # Verify list_available_periods
+                periods = list_available_periods("binance", "futures", "BTCUSDT", "1h")
+                assert periods == ["2024-01"], f"Expected ['2024-01'], got {periods}"
                 
                 print(f"\n✅ Roundtrip test passed")
                 print(f"   Saved to: {path}")

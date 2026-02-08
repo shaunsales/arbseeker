@@ -2,7 +2,7 @@
 Binance Vision data downloader.
 
 Downloads historical klines data from https://data.binance.vision/
-Stores as yearly Parquet files.
+Stores as monthly Parquet files.
 
 URL format:
     https://data.binance.vision/data/futures/um/monthly/klines/{SYMBOL}/{INTERVAL}/{SYMBOL}-{INTERVAL}-{YYYY}-{MM}.zip
@@ -16,7 +16,7 @@ from typing import Optional, Callable
 import requests
 import pandas as pd
 
-from core.data.storage import save_yearly, get_data_path, list_available_years
+from core.data.storage import save_monthly, get_data_path, list_available_periods
 from core.data.validator import validate_ohlcv, fill_gaps
 from core.data.market_hours import add_market_open_always
 
@@ -131,85 +131,90 @@ def download_month(
     return df
 
 
-def download_binance_year(
+def download_binance_months(
     symbol: str,
     interval: str,
-    year: int,
+    start_month: str,
+    end_month: str,
     market: str = "futures",
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     force: bool = False,
-) -> Optional[Path]:
+) -> list[Path]:
     """
-    Download a full year of klines data from Binance Vision.
+    Download monthly klines data from Binance Vision, saving each month as a parquet.
     
     Args:
         symbol: Trading pair (e.g., 'BTCUSDT')
         interval: Bar interval (e.g., '1h')
-        year: Year to download
+        start_month: Start month 'YYYY-MM'
+        end_month: End month 'YYYY-MM' (inclusive)
         market: 'futures' or 'spot'
-        progress_callback: Optional callback(month, total_months, status_msg)
+        progress_callback: Optional callback(current, total, status_msg)
         force: If True, re-download even if file exists
         
     Returns:
-        Path to saved parquet file, or None if no data available
+        List of paths to saved parquet files
     """
-    # Check if already exists
-    existing_years = list_available_years("binance", market, symbol, interval)
-    if year in existing_years and not force:
-        print(f"Year {year} already exists for {symbol}/{interval}, skipping (use force=True to re-download)")
-        return get_data_path("binance", market, symbol, interval, year)
-    
-    # Determine months to download
+    # Build list of (year, month) tuples
+    sy, sm = map(int, start_month.split("-"))
+    ey, em = map(int, end_month.split("-"))
+    months_to_download = []
+    y, m = sy, sm
+    while (y, m) <= (ey, em):
+        months_to_download.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    # Skip months in the future
     current_date = datetime.now(timezone.utc)
-    if year == current_date.year:
-        # Current year: only download up to last complete month
-        end_month = current_date.month - 1 if current_date.day < 15 else current_date.month
-        if end_month < 1:
-            print(f"No complete months available for {year} yet")
-            return None
-    else:
-        end_month = 12
-    
-    # Download all months
-    monthly_dfs = []
-    for month in range(1, end_month + 1):
+    months_to_download = [
+        (y, m) for y, m in months_to_download
+        if (y, m) < (current_date.year, current_date.month) or
+           (y, m) == (current_date.year, current_date.month) and current_date.day >= 15
+    ]
+
+    if not months_to_download:
+        print(f"No complete months in range {start_month} to {end_month}")
+        return []
+
+    existing = set(list_available_periods("binance", market, symbol, interval))
+    total = len(months_to_download)
+    saved_paths = []
+
+    for idx, (year, month) in enumerate(months_to_download, 1):
+        period = f"{year}-{month:02d}"
+
         if progress_callback:
-            progress_callback(month, end_month, f"Downloading {symbol} {year}-{month:02d}...")
-        
+            progress_callback(idx, total, f"Downloading {symbol} {period}...")
+
+        # Skip if already exists
+        if period in existing and not force:
+            path = get_data_path("binance", market, symbol, interval, period)
+            if path.exists():
+                print(f"  {period}: already exists, skipping")
+                saved_paths.append(path)
+                continue
+
         df = download_month(symbol, interval, year, month, market)
-        if df is not None and len(df) > 0:
-            monthly_dfs.append(df)
-            print(f"  Downloaded {year}-{month:02d}: {len(df):,} bars")
-        else:
-            print(f"  No data for {year}-{month:02d}")
-    
-    if not monthly_dfs:
-        print(f"No data available for {symbol} in {year}")
-        return None
-    
-    # Concatenate all months
-    df = pd.concat(monthly_dfs, axis=0)
-    df = df.sort_index()
-    df = df[~df.index.duplicated(keep="first")]
-    
-    print(f"Total: {len(df):,} bars for {year}")
-    
-    # Validate and fill gaps
-    report = validate_ohlcv(df, interval)
-    print(f"Validation: {report.coverage_pct:.1f}% coverage, {report.gap_count} gaps")
-    
-    if report.gap_count > 0:
-        df = fill_gaps(df, interval)
-        print(f"Filled gaps: now {len(df):,} bars")
-    
-    # Save to parquet
-    file_path = save_yearly(df, "binance", market, symbol, interval, year)
-    print(f"Saved: {file_path}")
-    
+        if df is None or len(df) == 0:
+            print(f"  {period}: no data")
+            continue
+
+        # Validate and fill gaps
+        report = validate_ohlcv(df, interval)
+        if report.gap_count > 0:
+            df = fill_gaps(df, interval)
+
+        path = save_monthly(df, "binance", market, symbol, interval, year, month)
+        saved_paths.append(path)
+        print(f"  {period}: {len(df):,} bars ({report.coverage_pct:.0f}% coverage) → {path.name}")
+
     if progress_callback:
-        progress_callback(end_month, end_month, "Complete")
-    
-    return file_path
+        progress_callback(total, total, "Complete")
+
+    return saved_paths
 
 
 def list_binance_symbols(market: str = "futures") -> list[str]:
@@ -235,56 +240,6 @@ def list_binance_symbols(market: str = "futures") -> list[str]:
         return []
 
 
-def get_symbol_start_year(symbol: str, interval: str, market: str = "futures") -> Optional[int]:
-    """
-    Find the earliest year with data for a symbol.
-    
-    Checks years going backwards until no data is found.
-    """
-    current_year = datetime.now(timezone.utc).year
-    
-    for year in range(current_year, 2017, -1):  # Binance started ~2017
-        # Check if January has data
-        url = get_monthly_url(symbol, interval, year, 1, market)
-        try:
-            response = requests.head(url, timeout=5)
-            if response.status_code != 200:
-                # No data for this year's January, previous year was the earliest
-                return year + 1 if year < current_year else None
-        except:
-            continue
-    
-    return 2017  # Binance inception
-
-
-def download_binance_range(
-    symbol: str,
-    interval: str,
-    start_year: int,
-    end_year: int,
-    market: str = "futures",
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> list[Path]:
-    """
-    Download multiple years of data.
-    
-    Returns:
-        List of paths to saved parquet files
-    """
-    paths = []
-    total_years = end_year - start_year + 1
-    
-    for i, year in enumerate(range(start_year, end_year + 1)):
-        if progress_callback:
-            progress_callback(i + 1, total_years, f"Year {year}")
-        
-        path = download_binance_year(symbol, interval, year, market)
-        if path:
-            paths.append(path)
-    
-    return paths
-
-
 def _fmt_bytes(n: int) -> str:
     """Format byte count as human-readable string."""
     for unit in ("B", "KB", "MB", "GB"):
@@ -299,23 +254,20 @@ def main():
     import argparse
     import time
 
-    current_year = datetime.now(timezone.utc).year
-
     parser = argparse.ArgumentParser(
-        description="Download Binance Vision USDM futures klines and save as yearly OHLCV parquet.",
+        description="Download Binance Vision USDM futures klines and save as monthly OHLCV parquet.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""Examples:
-  python -m core.data.binance --symbol BTCUSDT --year 2025
-  python -m core.data.binance --symbol ETHUSDT --start-year 2023 --end-year 2025
-  python -m core.data.binance --symbol SOLUSDT --year 2025 --intervals 1h,1d
+        epilog="""Examples:
+  python -m core.data.binance --symbol BTCUSDT --start 2025-01 --end 2025-12
+  python -m core.data.binance --symbol ETHUSDT --start 2024-06 --end 2025-06 --intervals 1h,1d
+  python -m core.data.binance --symbol SOLUSDT --start 2025-11 --end 2025-11
 
 Data is downloaded from https://data.binance.vision/ (no API key required).
-Files are saved to: data/binance/futures/{{SYMBOL}}/{{interval}}/{{year}}.parquet""",
+Files are saved to: data/binance/futures/{SYMBOL}/{interval}/YYYY-MM.parquet""",
     )
     parser.add_argument("--symbol", "-s", required=True, help="Trading pair (e.g. BTCUSDT, ETHUSDT)")
-    parser.add_argument("--year", "-y", type=int, default=None, help="Single year to download")
-    parser.add_argument("--start-year", type=int, default=None, help="Start year for range download")
-    parser.add_argument("--end-year", type=int, default=None, help=f"End year for range download (default: {current_year})")
+    parser.add_argument("--start", required=True, help="Start month (YYYY-MM)")
+    parser.add_argument("--end", required=True, help="End month (YYYY-MM, inclusive)")
     parser.add_argument("--intervals", "-i", default="1m,1h,1d",
                         help="Comma-separated intervals to download (default: 1m,1h,1d)")
     parser.add_argument("--market", "-m", default="futures", choices=["futures", "spot"],
@@ -323,17 +275,6 @@ Files are saved to: data/binance/futures/{{SYMBOL}}/{{interval}}/{{year}}.parque
     parser.add_argument("--force", action="store_true", help="Re-download even if data already exists")
 
     args = parser.parse_args()
-
-    # Resolve year range
-    if args.year:
-        start_year = args.year
-        end_year = args.year
-    elif args.start_year:
-        start_year = args.start_year
-        end_year = args.end_year or current_year
-    else:
-        print("ERROR: Specify --year or --start-year")
-        raise SystemExit(1)
 
     # Parse and validate intervals
     intervals = [i.strip() for i in args.intervals.split(",") if i.strip()]
@@ -343,10 +284,9 @@ Files are saved to: data/binance/futures/{{SYMBOL}}/{{interval}}/{{year}}.parque
             raise SystemExit(1)
 
     symbol = args.symbol.upper()
-    years = list(range(start_year, end_year + 1))
 
     print(f"Downloading {symbol} from Binance Vision")
-    print(f"Years: {start_year}–{end_year} | Intervals: {', '.join(intervals)} | Market: {args.market}")
+    print(f"Range: {args.start} to {args.end} | Intervals: {', '.join(intervals)} | Market: {args.market}")
     print()
 
     t0 = time.time()
@@ -354,16 +294,15 @@ Files are saved to: data/binance/futures/{{SYMBOL}}/{{interval}}/{{year}}.parque
 
     for interval in intervals:
         print(f"=== {interval} ===")
-        for year in years:
-            path = download_binance_year(
-                symbol=symbol,
-                interval=interval,
-                year=year,
-                market=args.market,
-                force=args.force,
-            )
-            if path:
-                all_paths.append(path)
+        paths = download_binance_months(
+            symbol=symbol,
+            interval=interval,
+            start_month=args.start,
+            end_month=args.end,
+            market=args.market,
+            force=args.force,
+        )
+        all_paths.extend(paths)
         print()
 
     elapsed = time.time() - t0
