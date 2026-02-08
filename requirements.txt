@@ -20,6 +20,9 @@ python-multipart>=0.0.6
 # AWS S3 access
 boto3>=1.28.0
 
+# Statistical analysis
+statsmodels>=0.14.0
+
 # Existing integrations
 
 

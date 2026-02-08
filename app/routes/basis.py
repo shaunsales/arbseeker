@@ -19,6 +19,7 @@ from core.data.basis import (
     list_basis_files,
     find_overlapping_periods,
 )
+from core.analysis.basis_stats import compute_basis_stats
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
@@ -137,12 +138,10 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
     }
     
     # Basis stats for each quote venue
+    venue_stats = {}
     for venue in quote_venues:
         col = f"{venue}_basis_bps"
-        stats[f"{venue}_mean_bps"] = df[col].mean()
-        stats[f"{venue}_std_bps"] = df[col].std()
-        stats[f"{venue}_min_bps"] = df[col].min()
-        stats[f"{venue}_max_bps"] = df[col].max()
+        venue_stats[venue] = compute_basis_stats(df[col], interval)
     
     return templates.TemplateResponse("basis/partials/preview.html", {
         "request": request,
@@ -150,5 +149,6 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
         "interval": interval,
         "quote_venues": quote_venues,
         "stats": stats,
+        "venue_stats": venue_stats,
         "chart_data": json.dumps(chart_data),
     })
