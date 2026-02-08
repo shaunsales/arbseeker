@@ -8,19 +8,27 @@
     <!-- TailwindCSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- HTMX 2.0 -->
+    <meta name="htmx-config" content='{"selfRequestsOnly":false}'>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script>htmx.config.selfRequestsOnly = false;</script>
+    
+    <!-- Alpine.js 3.x -->
+    <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
     
     <!-- TradingView Lightweight Charts -->
     <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     
+    <!-- App JS -->
+    <script src="/static/js/widgets.js"></script>
+    
     <style>
-        [htmx-indicator] { display: none; }
-        .htmx-request [htmx-indicator] { display: inline-block; }
-        .htmx-request.htmx-indicator { display: inline-block; }
+        .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+        .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+        [x-cloak] { display: none !important; }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
+<body class="bg-gray-900 text-gray-100 min-h-screen" hx-boost="true">
     <!-- Navigation -->
     <nav class="bg-gray-800 border-b border-gray-700">
         <div class="max-w-7xl mx-auto px-4">
@@ -28,13 +36,13 @@
                 <div class="flex items-center space-x-8">
                     <a href="/" class="text-xl font-bold text-blue-400">📊 Strategy Lab</a>
                     <div class="flex space-x-4">
-                        <a href="/data" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'data' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
+                        <a href="/data/" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'data' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
                             Data
                         </a>
-                        <a href="/basis" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'basis' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
+                        <a href="/basis/" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'basis' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
                             Basis
                         </a>
-                        <a href="/backtest" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'backtest' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
+                        <a href="/backtest/" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% if active_tab == 'backtest' %}bg-gray-700 text-white{% else %}text-gray-300{% endif %}">
                             Backtest
                         </a>
                     </div>

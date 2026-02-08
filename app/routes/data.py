@@ -40,7 +40,7 @@ class DownloadRequest(BaseModel):
 async def data_browser(request: Request):
     """Data browser page."""
     data_tree = list_all_data()
-    return templates.TemplateResponse("data/browser.html", {
+    return templates.TemplateResponse("pages/data.html", {
         "request": request,
         "data_tree": data_tree,
         "intervals": INTERVALS,
@@ -51,7 +51,7 @@ async def data_browser(request: Request):
 async def data_tree(request: Request):
     """Get data tree as HTML fragment (for HTMX)."""
     data_tree = list_all_data()
-    return templates.TemplateResponse("data/partials/tree.html", {
+    return templates.TemplateResponse("partials/data/tree.html", {
         "request": request,
         "data_tree": data_tree,
     })
@@ -75,7 +75,7 @@ async def data_preview(
         available_periods = list_available_periods(venue, market, ticker, interval)
         
         if not available_periods:
-            return templates.TemplateResponse("data/partials/no_data.html", {
+            return templates.TemplateResponse("partials/data/no_data.html", {
                 "request": request,
                 "ticker": ticker,
                 "interval": interval,
@@ -124,7 +124,7 @@ async def data_preview(
             "end": end_date or "",
         }
         
-        return templates.TemplateResponse("data/partials/preview.html", {
+        return templates.TemplateResponse("partials/data/preview.html", {
             "request": request,
             "venue": venue,
             "market": market,
@@ -145,7 +145,7 @@ async def data_preview(
             "date_range": date_range,
         })
     except Exception as e:
-        return templates.TemplateResponse("data/partials/error.html", {
+        return templates.TemplateResponse("partials/data/error.html", {
             "request": request,
             "error": str(e),
         })

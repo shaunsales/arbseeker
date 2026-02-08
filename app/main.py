@@ -30,7 +30,7 @@ templates = Jinja2Templates(directory=APP_DIR / "templates")
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Home page - redirect to data browser."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("pages/home.html", {"request": request})
 
 
 # Include routers

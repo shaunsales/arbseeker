@@ -10,42 +10,43 @@
     {% if markets %}
     {% for market, tickers in markets.items() %}
     {% if tickers %}
-    {# --- Venue + Market node (top level) --- #}
-    <div class="mb-1">
-        <div onclick="toggleNode(this)"
+    <!-- Venue + Market node -->
+    <div x-data="{open: true}" class="mb-1">
+        <div @click="open = !open"
              class="flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-700 cursor-pointer">
-            <span class="chevron text-gray-500 text-xs w-3">▼</span>
+            <span x-text="open ? '▼' : '▶'" class="text-gray-500 text-xs w-3"></span>
             <span class="text-gray-300 font-semibold capitalize">{{ venue }}</span>
             <span class="text-gray-500 text-xs">({{ market_labels.get(market, market) }})</span>
         </div>
-        <div class="ml-3">
+        <div x-show="open" class="ml-3">
             {% for ticker, intervals in tickers.items() %}
             {% if intervals %}
-            {# --- Ticker node --- #}
-            <div class="mb-0.5">
-                <div onclick="toggleNode(this)"
+            <!-- Ticker node -->
+            <div x-data="{open: false}" class="mb-0.5">
+                <div @click="open = !open"
                      class="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-700 cursor-pointer">
-                    <span class="chevron text-gray-500 text-xs w-3">▶</span>
+                    <span x-text="open ? '▼' : '▶'" class="text-gray-500 text-xs w-3"></span>
                     <span class="text-gray-200 font-medium">{{ ticker }}</span>
                 </div>
-                <div class="ml-3 hidden">
+                <div x-show="open" class="ml-3">
                     {% for interval, periods in intervals.items() %}
-                    {# --- Interval node --- #}
-                    <div class="mb-0.5">
-                        <div onclick="toggleNode(this)"
+                    <!-- Interval node -->
+                    <div x-data="{open: false}" class="mb-0.5">
+                        <div @click="open = !open"
                              class="flex items-center gap-1.5 rounded hover:bg-gray-700 cursor-pointer group">
-                            <span class="chevron text-gray-500 text-xs w-3 py-1 pl-2">▶</span>
-                            <button id="interval-{{ venue }}-{{ market }}-{{ ticker }}-{{ interval }}"
-                                    onclick="event.stopPropagation(); loadPreview('{{ venue }}','{{ market }}','{{ ticker }}','{{ interval }}')"
+                            <span x-text="open ? '▼' : '▶'" class="text-gray-500 text-xs w-3 py-1 pl-2"></span>
+                            <button @click.stop
+                                    hx-get="/data/preview/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}"
+                                    hx-target="#data-preview" hx-boost="false"
                                     class="text-blue-400 hover:text-blue-300 font-medium py-1 pr-2">
                                 {{ interval }}
                             </button>
                             <span class="text-gray-600 text-xs">{{ periods | length }} mo</span>
                         </div>
-                        <div class="ml-5 hidden">
+                        <div x-show="open" class="ml-5">
                             {% for period in periods %}
-                            <button id="month-{{ venue }}-{{ market }}-{{ ticker }}-{{ interval }}-{{ period }}"
-                                    onclick="loadMonth('{{ venue }}','{{ market }}','{{ ticker }}','{{ interval }}','{{ period }}')"
+                            <button hx-get="/data/preview/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}?periods={{ period }}"
+                                    hx-target="#data-preview" hx-boost="false"
                                     class="block w-full text-left px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 text-xs font-mono">
                                 {{ period }}
                             </button>

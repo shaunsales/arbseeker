@@ -1,4 +1,28 @@
-<div>
+<div x-data="{
+    venue: '{{ venue }}',
+    market: '{{ market }}',
+    ticker: '{{ ticker }}',
+    interval: '{{ interval }}',
+    page: {{ pagination.page }},
+    pageSize: {{ pagination.page_size }},
+    startDate: '{{ date_range.start }}',
+    endDate: '{{ date_range.end }}',
+    tab: 'chart',
+    buildUrl(page, pageSize) {
+        let url = `/data/preview/${this.venue}/${this.market}/${this.ticker}/${this.interval}`;
+        const params = new URLSearchParams();
+        if (page > 1) params.set('page', page);
+        if (pageSize !== 100) params.set('page_size', pageSize);
+        if (this.startDate) params.set('start_date', this.startDate);
+        if (this.endDate) params.set('end_date', this.endDate);
+        if (params.toString()) url += '?' + params.toString();
+        return url;
+    },
+    goToPage(p) { htmx.ajax('GET', this.buildUrl(p, this.pageSize), '#data-preview'); },
+    applyFilters() { htmx.ajax('GET', this.buildUrl(1, this.pageSize), '#data-preview'); },
+    clearFilters() { this.startDate = ''; this.endDate = ''; this.applyFilters(); },
+    changePageSize(s) { htmx.ajax('GET', this.buildUrl(1, parseInt(s)), '#data-preview'); },
+}">
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
         <div>
@@ -33,29 +57,31 @@
     <div class="flex items-center gap-4 mb-4 p-3 bg-gray-700 rounded">
         <div class="flex items-center gap-2">
             <label class="text-sm text-gray-400">From:</label>
-            <input type="date" id="filter-start" value="{{ date_range.start }}" 
+            <input type="date" x-model="startDate"
                    min="{{ date_range.min }}" max="{{ date_range.max }}"
                    class="bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm">
         </div>
         <div class="flex items-center gap-2">
             <label class="text-sm text-gray-400">To:</label>
-            <input type="date" id="filter-end" value="{{ date_range.end }}"
+            <input type="date" x-model="endDate"
                    min="{{ date_range.min }}" max="{{ date_range.max }}"
                    class="bg-gray-600 border border-gray-500 rounded px-2 py-1 text-sm">
         </div>
-        <button onclick="applyFilters()" class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
+        <button @click="applyFilters()" class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
             Apply
         </button>
-        <button onclick="clearFilters()" class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
+        <button @click="clearFilters()" class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
             Clear
         </button>
         <div class="flex-1"></div>
         <div class="flex items-center gap-2">
             <a href="/data/export/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}?format=csv{% if date_range.start %}&start_date={{ date_range.start }}{% endif %}{% if date_range.end %}&end_date={{ date_range.end }}{% endif %}" 
+               hx-boost="false"
                class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">
                 CSV
             </a>
             <a href="/data/export/{{ venue }}/{{ market }}/{{ ticker }}/{{ interval }}?format=parquet{% if date_range.start %}&start_date={{ date_range.start }}{% endif %}{% if date_range.end %}&end_date={{ date_range.end }}{% endif %}"
+               hx-boost="false"
                class="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm">
                 Parquet
             </a>
@@ -86,22 +112,26 @@
     
     <!-- Tabs: Chart / Table -->
     <div class="flex border-b border-gray-600 mb-4">
-        <button id="tab-chart" onclick="showTab('chart')" class="px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-400">
+        <button @click="tab = 'chart'"
+                :class="tab === 'chart' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'"
+                class="px-4 py-2 text-sm font-medium border-b-2">
             Chart
         </button>
-        <button id="tab-table" onclick="showTab('table')" class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+        <button @click="tab = 'table'"
+                :class="tab === 'table' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-300'"
+                class="px-4 py-2 text-sm font-medium border-b-2">
             Table
         </button>
     </div>
     
     <!-- Chart View -->
-    <div id="view-chart">
+    <div x-show="tab === 'chart'">
         <div id="price-chart" class="bg-gray-900 rounded" style="height: 400px;"></div>
         <div id="volume-chart" class="bg-gray-900 rounded mt-2" style="height: 120px;"></div>
     </div>
     
     <!-- Table View -->
-    <div id="view-table" class="hidden">
+    <div x-show="tab === 'table'" x-cloak>
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead class="bg-gray-700">
@@ -135,173 +165,24 @@
                 Showing {{ (pagination.page - 1) * pagination.page_size + 1 }} - {{ [pagination.page * pagination.page_size, pagination.total_rows] | min }} of {{ "{:,}".format(pagination.total_rows) }}
             </div>
             <div class="flex items-center gap-2">
-                <select id="page-size" onchange="changePageSize(this.value)" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                <select @change="changePageSize($event.target.value)" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
                     <option value="100" {% if pagination.page_size == 100 %}selected{% endif %}>100</option>
                     <option value="500" {% if pagination.page_size == 500 %}selected{% endif %}>500</option>
                     <option value="1000" {% if pagination.page_size == 1000 %}selected{% endif %}>1000</option>
                 </select>
-                <button onclick="goToPage(1)" {% if pagination.page == 1 %}disabled{% endif %}
+                <button @click="goToPage(1)" {% if pagination.page == 1 %}disabled{% endif %}
                         class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">«</button>
-                <button onclick="goToPage({{ pagination.page - 1 }})" {% if pagination.page == 1 %}disabled{% endif %}
+                <button @click="goToPage({{ pagination.page - 1 }})" {% if pagination.page == 1 %}disabled{% endif %}
                         class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">‹</button>
                 <span class="px-3 text-sm">{{ pagination.page }} / {{ pagination.total_pages }}</span>
-                <button onclick="goToPage({{ pagination.page + 1 }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
+                <button @click="goToPage({{ pagination.page + 1 }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
                         class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">›</button>
-                <button onclick="goToPage({{ pagination.total_pages }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
+                <button @click="goToPage({{ pagination.total_pages }})" {% if pagination.page == pagination.total_pages %}disabled{% endif %}
                         class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">»</button>
             </div>
         </div>
     </div>
 </div>
 
-<script>
-// Current state (use var to allow redeclaration on HTMX swap)
-var previewState = {
-    venue: '{{ venue }}',
-    market: '{{ market }}',
-    ticker: '{{ ticker }}',
-    interval: '{{ interval }}',
-    page: {{ pagination.page }},
-    pageSize: {{ pagination.page_size }},
-    startDate: '{{ date_range.start }}',
-    endDate: '{{ date_range.end }}',
-};
-
-window.showTab = function(tab) {
-    document.getElementById('view-chart').classList.toggle('hidden', tab !== 'chart');
-    document.getElementById('view-table').classList.toggle('hidden', tab !== 'table');
-    document.getElementById('tab-chart').classList.toggle('border-blue-500', tab === 'chart');
-    document.getElementById('tab-chart').classList.toggle('text-blue-400', tab === 'chart');
-    document.getElementById('tab-chart').classList.toggle('border-transparent', tab !== 'chart');
-    document.getElementById('tab-chart').classList.toggle('text-gray-400', tab !== 'chart');
-    document.getElementById('tab-table').classList.toggle('border-blue-500', tab === 'table');
-    document.getElementById('tab-table').classList.toggle('text-blue-400', tab === 'table');
-    document.getElementById('tab-table').classList.toggle('border-transparent', tab !== 'table');
-    document.getElementById('tab-table').classList.toggle('text-gray-400', tab !== 'table');
-};
-
-window.buildUrl = function(page, pageSize, startDate, endDate) {
-    let url = `/data/preview/${previewState.venue}/${previewState.market}/${previewState.ticker}/${previewState.interval}`;
-    const params = new URLSearchParams();
-    if (page > 1) params.set('page', page);
-    if (pageSize !== 100) params.set('page_size', pageSize);
-    if (startDate) params.set('start_date', startDate);
-    if (endDate) params.set('end_date', endDate);
-    if (params.toString()) url += '?' + params.toString();
-    return url;
-};
-
-window.goToPage = function(page) {
-    const url = buildUrl(page, previewState.pageSize, previewState.startDate, previewState.endDate);
-    htmx.ajax('GET', url, '#data-preview');
-};
-
-window.changePageSize = function(size) {
-    const url = buildUrl(1, parseInt(size), previewState.startDate, previewState.endDate);
-    htmx.ajax('GET', url, '#data-preview');
-};
-
-window.applyFilters = function() {
-    const startDate = document.getElementById('filter-start').value;
-    const endDate = document.getElementById('filter-end').value;
-    const url = buildUrl(1, previewState.pageSize, startDate, endDate);
-    htmx.ajax('GET', url, '#data-preview');
-};
-
-window.clearFilters = function() {
-    document.getElementById('filter-start').value = '';
-    document.getElementById('filter-end').value = '';
-    const url = buildUrl(1, previewState.pageSize, '', '');
-    htmx.ajax('GET', url, '#data-preview');
-}
-
-// Initialize TradingView Lightweight Charts
-setTimeout(function() {
-    const data = {{ chart_data | safe }};
-    
-    if (!data || !data.timestamps || data.timestamps.length === 0) {
-        console.error('No chart data available');
-        return;
-    }
-    
-    // Clear existing charts
-    document.getElementById('price-chart').innerHTML = '';
-    document.getElementById('volume-chart').innerHTML = '';
-    
-    // Chart options
-    const chartOptions = {
-        layout: {
-            background: { type: 'solid', color: 'transparent' },
-            textColor: '#9ca3af',
-        },
-        grid: {
-            vertLines: { color: '#374151' },
-            horzLines: { color: '#374151' },
-        },
-        crosshair: {
-            mode: LightweightCharts.CrosshairMode.Normal,
-        },
-        rightPriceScale: {
-            borderColor: '#374151',
-        },
-        timeScale: {
-            borderColor: '#374151',
-            timeVisible: true,
-        },
-    };
-    
-    // Price chart
-    const priceChart = LightweightCharts.createChart(
-        document.getElementById('price-chart'), 
-        { ...chartOptions, height: 400 }
-    );
-    
-    const lineSeries = priceChart.addLineSeries({
-        color: '#3b82f6',
-        lineWidth: 2,
-    });
-    
-    // Convert data to Lightweight Charts format
-    const priceData = data.timestamps.map((t, i) => ({
-        time: Math.floor(new Date(t).getTime() / 1000),
-        value: data.close[i],
-    }));
-    lineSeries.setData(priceData);
-    
-    // Volume chart
-    const volumeChart = LightweightCharts.createChart(
-        document.getElementById('volume-chart'),
-        { ...chartOptions, height: 120 }
-    );
-    
-    const volumeSeries = volumeChart.addHistogramSeries({
-        priceFormat: { type: 'volume' },
-        priceScaleId: '',
-    });
-    
-    const volumeData = data.timestamps.map((t, i) => ({
-        time: Math.floor(new Date(t).getTime() / 1000),
-        value: data.volume[i],
-        color: i === 0 ? '#6b7280' : (data.close[i] >= data.close[i-1] ? '#22c55e' : '#ef4444'),
-    }));
-    volumeSeries.setData(volumeData);
-    
-    // Sync time scales
-    priceChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) volumeChart.timeScale().setVisibleLogicalRange(range);
-    });
-    volumeChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) priceChart.timeScale().setVisibleLogicalRange(range);
-    });
-    
-    // Fit all content in view
-    priceChart.timeScale().setVisibleRange({
-        from: priceData[0].time,
-        to: priceData[priceData.length - 1].time,
-    });
-    volumeChart.timeScale().setVisibleRange({
-        from: volumeData[0].time,
-        to: volumeData[volumeData.length - 1].time,
-    });
-}, 10);
-</script>
+<!-- Chart data for widget init -->
+<script type="application/json" id="ohlcv-chart-data">{{ chart_data | safe }}</script>

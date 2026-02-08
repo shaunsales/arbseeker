@@ -16,7 +16,7 @@ templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates"
 @router.get("/", response_class=HTMLResponse)
 async def backtest_page(request: Request):
     """Backtest configuration page."""
-    return templates.TemplateResponse("backtest/index.html", {
+    return templates.TemplateResponse("pages/backtest.html", {
         "request": request,
     })
 

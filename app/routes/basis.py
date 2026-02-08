@@ -31,7 +31,7 @@ async def basis_builder(request: Request):
     data_tree = list_all_data()
     basis_files = list_basis_files()
     
-    return templates.TemplateResponse("basis/builder.html", {
+    return templates.TemplateResponse("pages/basis.html", {
         "request": request,
         "data_tree": data_tree,
         "basis_files": basis_files,
@@ -107,7 +107,7 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
     df = load_basis(ticker, interval, periods)
     
     if df is None:
-        return templates.TemplateResponse("basis/partials/no_data.html", {
+        return templates.TemplateResponse("partials/basis/no_data.html", {
             "request": request,
             "ticker": ticker,
             "interval": interval,
@@ -143,7 +143,7 @@ async def preview_basis(request: Request, ticker: str, interval: str, period: Op
         col = f"{venue}_basis_bps"
         venue_stats[venue] = compute_basis_stats(df[col], interval)
     
-    return templates.TemplateResponse("basis/partials/preview.html", {
+    return templates.TemplateResponse("partials/basis/preview.html", {
         "request": request,
         "ticker": ticker,
         "interval": interval,

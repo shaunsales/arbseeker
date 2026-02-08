@@ -1,0 +1,324 @@
+{% extends "layouts/base.html" %}
+
+{% set active_tab = "basis" %}
+{% block title %}Basis Builder - Strategy Lab{% endblock %}
+
+{% block main_class %}flex h-[calc(100vh-3.5rem)]{% endblock %}
+
+{% block content %}
+<!-- Sidebar -->
+<aside x-data="basisBuilder()" class="w-80 flex-shrink-0 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-700 flex-shrink-0">
+        <span class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Basis Builder</span>
+    </div>
+    <div class="flex-1 overflow-y-auto">
+
+        <!-- Step 1: Base Venue -->
+        <div class="border-b border-gray-700" x-data="{open: true}">
+            <div @click="open = !open" class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-gray-750">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500">1</span>
+                    <span class="text-sm font-medium text-gray-300">Base (Reference)</span>
+                </div>
+                <span class="text-xs text-blue-400 truncate max-w-[120px]" x-text="baseSummary"></span>
+            </div>
+            <div x-show="open" class="px-4 pb-3 space-y-2">
+                <select x-model="baseVenueMarket" class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                    <option value="">Venue...</option>
+                    {% for venue, markets in data_tree.items() %}
+                    {% for market in markets.keys() %}
+                    <option value="{{ venue }}|{{ market }}">{{ venue }} ({{ market }})</option>
+                    {% endfor %}
+                    {% endfor %}
+                </select>
+                <select x-model="baseTicker" class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                    <option value="">Ticker...</option>
+                    <template x-for="t in baseTickers" :key="t">
+                        <option :value="t" x-text="t"></option>
+                    </template>
+                </select>
+            </div>
+        </div>
+
+        <!-- Step 2: Quote Venue -->
+        <div class="border-b border-gray-700" x-data="{open: true}">
+            <div @click="open = !open" class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-gray-750">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500">2</span>
+                    <span class="text-sm font-medium text-gray-300">Quote (Comparison)</span>
+                </div>
+                <span class="text-xs text-blue-400 truncate max-w-[120px]" x-text="quoteSummary"></span>
+            </div>
+            <div x-show="open" class="px-4 pb-3 space-y-2">
+                <select x-model="quoteVenueMarket" class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                    <option value="">Venue...</option>
+                    {% for venue, markets in data_tree.items() %}
+                    {% for market in markets.keys() %}
+                    <option value="{{ venue }}|{{ market }}">{{ venue }} ({{ market }})</option>
+                    {% endfor %}
+                    {% endfor %}
+                </select>
+                <select x-model="quoteTicker" class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-sm">
+                    <option value="">Ticker...</option>
+                    <template x-for="t in quoteTickers" :key="t">
+                        <option :value="t" x-text="t"></option>
+                    </template>
+                </select>
+            </div>
+        </div>
+
+        <!-- Step 3: Interval -->
+        <div class="border-b border-gray-700" x-data="{open: true}">
+            <div @click="open = !open" class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-gray-750">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500">3</span>
+                    <span class="text-sm font-medium text-gray-300">Interval</span>
+                </div>
+                <span class="text-xs text-blue-400" x-text="interval"></span>
+            </div>
+            <div x-show="open" class="px-4 pb-3">
+                <div class="flex flex-wrap gap-1.5">
+                    <template x-if="commonIntervals.length === 0 && baseTicker && quoteTicker">
+                        <span class="text-xs text-red-400">No common intervals</span>
+                    </template>
+                    <template x-if="!baseTicker || !quoteTicker">
+                        <span class="text-xs text-gray-500">Select base and quote first</span>
+                    </template>
+                    <template x-for="iv in commonIntervals" :key="iv">
+                        <button @click="selectInterval(iv)"
+                                :class="interval === iv ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                                class="px-2.5 py-1 rounded text-xs font-medium transition" x-text="iv">
+                        </button>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Months -->
+        <div class="border-b border-gray-700" x-data="{open: true}">
+            <div @click="open = !open" class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-gray-750">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-gray-500">4</span>
+                    <span class="text-sm font-medium text-gray-300">Months</span>
+                </div>
+                <span class="text-xs text-blue-400" x-text="monthsSummary"></span>
+            </div>
+            <div x-show="open" class="px-4 pb-3">
+                <div class="flex flex-wrap gap-1.5">
+                    <template x-if="!interval">
+                        <span class="text-xs text-gray-500">Select interval first</span>
+                    </template>
+                    <template x-if="interval && commonMonths.length === 0">
+                        <span class="text-xs text-red-400">No common months</span>
+                    </template>
+                    <template x-for="m in commonMonths" :key="m">
+                        <button @click="onMonthClick(m)"
+                                :class="selectedMonths.includes(m) ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'"
+                                class="px-2 py-1 rounded text-xs font-mono transition" x-text="m">
+                        </button>
+                    </template>
+                </div>
+                <div x-show="commonMonths.length > 0" class="mt-2 text-xs text-gray-500">
+                    Click to set start, click again to set end of range
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Button -->
+        <div class="px-4 py-3 border-b border-gray-700">
+            <button @click="createBasis()" :disabled="!canCreate || creating"
+                    class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded text-sm transition">
+                <span x-text="creating ? 'Creating...' : 'Create Basis File'"></span>
+            </button>
+            <div x-show="createResult" class="mt-2 p-2 rounded text-xs"
+                 :class="createResult?.success ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'">
+                <template x-if="createResult?.success">
+                    <span x-text="'✓ Created: ' + createResult.bars + ' bars, ' + createResult.coverage_pct.toFixed(1) + '% coverage'"></span>
+                </template>
+                <template x-if="createResult && !createResult.success">
+                    <span x-text="'✗ ' + createResult.error"></span>
+                </template>
+            </div>
+        </div>
+
+        <!-- Existing Basis Files -->
+        <div x-data="{open: true}" hx-indicator="#basis-loading">
+            <div @click="open = !open" class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-gray-750">
+                <span class="text-sm font-medium text-gray-400">Existing Files</span>
+                <span class="text-xs text-gray-500">{{ basis_files | length }}</span>
+            </div>
+            <div x-show="open" class="px-4 pb-3 text-sm select-none">
+                {% if basis_files %}
+                {% for ticker, intervals in basis_files.items() %}
+                <div x-data="{open: false}" class="mb-1">
+                    <div @click="open = !open" class="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-gray-700 cursor-pointer">
+                        <span x-text="open ? '▼' : '▶'" class="text-gray-500 text-xs w-3"></span>
+                        <span class="text-gray-300 font-medium">{{ ticker }}</span>
+                    </div>
+                    <div x-show="open" class="ml-4">
+                        {% for interval, periods in intervals.items() %}
+                        <div x-data="{open: false}" class="mb-0.5">
+                            <div @click="open = !open" class="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-gray-700 cursor-pointer">
+                                <span x-text="open ? '▼' : '▶'" class="text-gray-500 text-xs w-3"></span>
+                                <button @click.stop
+                                        hx-get="/basis/preview/{{ ticker }}/{{ interval }}"
+                                        hx-target="#basis-preview" hx-boost="false"
+                                        class="text-blue-400 hover:text-blue-300 font-medium text-xs">{{ interval }}</button>
+                            </div>
+                            <div x-show="open" class="ml-4">
+                                {% for period in periods %}
+                                <button hx-get="/basis/preview/{{ ticker }}/{{ interval }}?period={{ period }}"
+                                        hx-target="#basis-preview" hx-boost="false"
+                                        class="block w-full text-left px-2 py-0.5 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700 text-xs font-mono">
+                                    {{ period }}
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <span class="text-xs text-gray-500">No basis files yet</span>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+</aside>
+
+<!-- Main: Preview Area -->
+<div class="flex-1 overflow-y-auto p-6">
+    <div id="basis-preview" class="max-w-6xl mx-auto" hx-on::after-swap="initBasisCharts()">
+        <div class="text-center text-gray-500 py-20">
+            <div class="text-4xl mb-3">📈</div>
+            <p>Configure base and quote venues, then select an interval and months</p>
+        </div>
+    </div>
+    <div id="basis-loading" class="htmx-indicator text-center py-20">
+        <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-gray-600 border-t-blue-400"></div>
+        <p class="text-gray-500 text-sm mt-3">Loading basis data...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function basisBuilder() {
+    return {
+        dataTree: {{ data_tree | tojson | safe }},
+        baseVenueMarket: '',
+        baseTicker: '',
+        quoteVenueMarket: '',
+        quoteTicker: '',
+        interval: '',
+        selectedMonths: [],
+        commonMonths: [],
+        monthSelectStart: null,
+        creating: false,
+        createResult: null,
+
+        get baseVenue() { return this.baseVenueMarket.split('|')[0] || ''; },
+        get baseMarket() { return this.baseVenueMarket.split('|')[1] || ''; },
+        get quoteVenue() { return this.quoteVenueMarket.split('|')[0] || ''; },
+        get quoteMarket() { return this.quoteVenueMarket.split('|')[1] || ''; },
+
+        get baseTickers() {
+            if (!this.baseVenue || !this.baseMarket) return [];
+            return Object.keys(this.dataTree[this.baseVenue]?.[this.baseMarket] || {});
+        },
+        get quoteTickers() {
+            if (!this.quoteVenue || !this.quoteMarket) return [];
+            return Object.keys(this.dataTree[this.quoteVenue]?.[this.quoteMarket] || {});
+        },
+        get commonIntervals() {
+            if (!this.baseTicker || !this.quoteTicker) return [];
+            const base = new Set(Object.keys(this.dataTree[this.baseVenue]?.[this.baseMarket]?.[this.baseTicker] || {}));
+            const quote = new Set(Object.keys(this.dataTree[this.quoteVenue]?.[this.quoteMarket]?.[this.quoteTicker] || {}));
+            return [...base].filter(i => quote.has(i));
+        },
+        get commonMonthsComputed() {
+            if (!this.interval || !this.baseTicker || !this.quoteTicker) return [];
+            const base = new Set(this.dataTree[this.baseVenue]?.[this.baseMarket]?.[this.baseTicker]?.[this.interval] || []);
+            const quote = new Set(this.dataTree[this.quoteVenue]?.[this.quoteMarket]?.[this.quoteTicker]?.[this.interval] || []);
+            return [...base].filter(p => quote.has(p)).sort();
+        },
+        get baseSummary() {
+            return this.baseTicker ? `${this.baseVenue} / ${this.baseTicker}` : '';
+        },
+        get quoteSummary() {
+            return this.quoteTicker ? `${this.quoteVenue} / ${this.quoteTicker}` : '';
+        },
+        get monthsSummary() {
+            if (this.selectedMonths.length === 0) return '';
+            const first = this.selectedMonths[0];
+            const last = this.selectedMonths[this.selectedMonths.length - 1];
+            return first === last ? first : `${first} → ${last}`;
+        },
+        get canCreate() {
+            return this.baseTicker && this.quoteTicker && this.interval && this.selectedMonths.length > 0;
+        },
+
+        init() {
+            this.$watch('baseVenueMarket', () => { this.baseTicker = ''; this.interval = ''; this.selectedMonths = []; this.commonMonths = []; });
+            this.$watch('quoteVenueMarket', () => { this.quoteTicker = ''; this.interval = ''; this.selectedMonths = []; this.commonMonths = []; });
+            this.$watch('baseTicker', () => { this.interval = ''; this.selectedMonths = []; this.commonMonths = []; });
+            this.$watch('quoteTicker', () => { this.interval = ''; this.selectedMonths = []; this.commonMonths = []; });
+        },
+
+        selectInterval(iv) {
+            this.interval = iv;
+            this.commonMonths = this.commonMonthsComputed;
+            this.selectedMonths = [...this.commonMonths];
+            this.monthSelectStart = null;
+        },
+
+        onMonthClick(month) {
+            if (this.monthSelectStart === null) {
+                this.monthSelectStart = month;
+                this.selectedMonths = [month];
+            } else {
+                const startIdx = this.commonMonths.indexOf(this.monthSelectStart);
+                const endIdx = this.commonMonths.indexOf(month);
+                const lo = Math.min(startIdx, endIdx);
+                const hi = Math.max(startIdx, endIdx);
+                this.selectedMonths = this.commonMonths.slice(lo, hi + 1);
+                this.monthSelectStart = null;
+            }
+        },
+
+        async createBasis() {
+            this.creating = true;
+            this.createResult = null;
+            try {
+                const resp = await fetch('/basis/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        base_venue: this.baseVenue,
+                        base_market: this.baseMarket,
+                        base_ticker: this.baseTicker,
+                        quote_venue: this.quoteVenue,
+                        quote_market: this.quoteMarket,
+                        quote_ticker: this.quoteTicker,
+                        quote_name: this.quoteVenue,
+                        interval: this.interval,
+                        periods: this.selectedMonths,
+                    }),
+                });
+                const result = await resp.json();
+                this.createResult = result;
+                if (result.success) {
+                    htmx.ajax('GET', `/basis/preview/${this.baseTicker}/${this.interval}`, '#basis-preview');
+                    setTimeout(() => location.reload(), 2000);
+                }
+            } catch (e) {
+                this.createResult = { success: false, error: e.message };
+            }
+            this.creating = false;
+        },
+    }
+}
+</script>
+{% endblock %}
