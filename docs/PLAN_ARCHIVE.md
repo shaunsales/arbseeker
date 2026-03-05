@@ -105,27 +105,35 @@ Module: `core/data/basis.py` with `create_basis_file()` function.
 
 ---
 
-## Phase 3: Backtest Output Standardization
+## Research: Cross-Venue Gold Basis Arbitrage
 
-**Key principle:** Input data stays in `data/`, backtest results go to `output/backtests/`.
+See [`docs/GOLD_BASIS_ARB.md`](docs/GOLD_BASIS_ARB.md) — separate project for data collection, output feeds into this platform's basis pipeline.
 
-### 3.1 Backtest Result Schema
-Bar-by-bar output: `output/backtests/{strategy_name}_{timestamp}.parquet`
-- Simplified price data (reference only)
-- Indicators (ONLY those used in strategy decision logic)
-- Position state, signals, P&L, drawdown, costs
+---
 
-### 3.2 Trade-Level Summary
-`output/backtests/{strategy_name}_{timestamp}_trades.parquet`
+## Phase 3: Single Asset Strategy Backtesting
 
-### 3.3 Metadata File
-`output/backtests/{strategy_name}_{timestamp}.json`
+See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) for full detail.
 
-### 3.4 Update BacktestEngine
-- [ ] Collect bar-level data during run
-- [ ] Track only indicators from strategy.config.indicators
-- [ ] Add `save_results(path)` method
-- [ ] Unified format for SingleAsset, MultiLegged, and BasisStrategy
+### 3A — Strategy Data Builder
+- [ ] `StrategyDataSpec` + manifest schema
+- [ ] Data builder (download OHLCV, compute indicators, save parquets per interval)
+- [ ] Web UI — strategy data builder page
+
+### 3B — Backtest Engine v2
+- [ ] `StrategyData` multi-interval accessor (look-ahead-safe)
+- [ ] Refactored strategy interface (always 1m execution, multi-interval reads)
+- [ ] Decision context capture on entry/exit
+- [ ] Bar-level state recording
+- [ ] QuantStats metrics (replace hand-rolled `compute_metrics`)
+- [ ] Parameter optimisation (grid search)
+
+### 3C — Visualisation
+- [ ] Backtest viewer (price + indicators + equity + trade markers, synced charts)
+- [ ] Source data viewer
+- [ ] Trade inspector (click trade → see decision context)
+- [ ] QuantStats tearsheet embed
+- [ ] Optimisation results table
 
 ---
 
@@ -149,5 +157,7 @@ Bar-by-bar output: `output/backtests/{strategy_name}_{timestamp}.parquet`
 | 2.1-2.2 | ✅ Basis file schema + builder |
 | 2.3 | ✅ Web app basis builder UI |
 | 2.4 | ✅ BasisStrategy class |
-| 3.1-3.4 | Backtest output schema + engine updates |
+| 3A | Strategy data builder (multi-interval parquets + web UI) |
+| 3B | Backtest engine v2 (multi-interval, context capture, QuantStats) |
+| 3C | Visualisation (charts, trade inspector, tearsheets) |
 | 4.x | Performance dashboard (iterative) |
