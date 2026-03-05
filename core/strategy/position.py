@@ -50,20 +50,75 @@ class Position:
     unrealized_pnl: float = 0.0
     status: PositionStatus = PositionStatus.OPEN
     
+    # Stop loss / trailing stop loss
+    stop_loss_pct: Optional[float] = None      # Fixed SL as % from entry (e.g. 2.0 = 2%)
+    trailing_stop_pct: Optional[float] = None   # TSL as % from best price
+    best_price: float = 0.0                     # Tracks best price since entry (for TSL)
+    
     # Metadata
     entry_reason: str = ""
     metadata: dict = field(default_factory=dict)
     
     def update_price(self, price: float) -> float:
-        """Update current price and recalculate unrealized P&L."""
+        """Update current price, best price, and recalculate unrealized P&L."""
         self.current_price = price
         
+        # Track best price for trailing stop
         if self.side == Side.LONG:
+            self.best_price = max(self.best_price, price)
             self.unrealized_pnl = self.size * (price - self.entry_price) / self.entry_price
         else:  # SHORT
+            if self.best_price == 0:
+                self.best_price = price
+            self.best_price = min(self.best_price, price)
             self.unrealized_pnl = self.size * (self.entry_price - price) / self.entry_price
         
         return self.unrealized_pnl
+    
+    @property
+    def stop_loss_price(self) -> Optional[float]:
+        """Compute the fixed stop loss price level."""
+        if self.stop_loss_pct is None:
+            return None
+        if self.side == Side.LONG:
+            return self.entry_price * (1 - self.stop_loss_pct / 100)
+        else:
+            return self.entry_price * (1 + self.stop_loss_pct / 100)
+    
+    @property
+    def trailing_stop_price(self) -> Optional[float]:
+        """Compute the trailing stop price from best price."""
+        if self.trailing_stop_pct is None or self.best_price == 0:
+            return None
+        if self.side == Side.LONG:
+            return self.best_price * (1 - self.trailing_stop_pct / 100)
+        else:
+            return self.best_price * (1 + self.trailing_stop_pct / 100)
+    
+    def check_stop_loss(self, price: float) -> Optional[str]:
+        """
+        Check if price triggers stop loss or trailing stop.
+        
+        Returns exit reason string if triggered, None otherwise.
+        Checks fixed SL first, then TSL.
+        """
+        # Fixed stop loss
+        sl = self.stop_loss_price
+        if sl is not None:
+            if self.side == Side.LONG and price <= sl:
+                return f"stop_loss_hit@{price:.2f}<=sl@{sl:.2f}"
+            elif self.side == Side.SHORT and price >= sl:
+                return f"stop_loss_hit@{price:.2f}>=sl@{sl:.2f}"
+        
+        # Trailing stop loss
+        tsl = self.trailing_stop_price
+        if tsl is not None:
+            if self.side == Side.LONG and price <= tsl:
+                return f"trailing_stop_hit@{price:.2f}<=tsl@{tsl:.2f}(best={self.best_price:.2f})"
+            elif self.side == Side.SHORT and price >= tsl:
+                return f"trailing_stop_hit@{price:.2f}>=tsl@{tsl:.2f}(best={self.best_price:.2f})"
+        
+        return None
     
     def close(self, exit_price: float, exit_time: datetime) -> "Trade":
         """
@@ -169,6 +224,10 @@ class Signal:
     price: Optional[float] = None  # Limit price (None = market)
     reason: str = ""
     metadata: dict = field(default_factory=dict)
+    
+    # Risk management (applied by engine when position is opened)
+    stop_loss_pct: Optional[float] = None       # Fixed SL % from entry
+    trailing_stop_pct: Optional[float] = None    # TSL % from best price
     
     @classmethod
     def buy(cls, size: float = 1.0, reason: str = "", **kwargs) -> "Signal":

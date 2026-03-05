@@ -441,68 +441,103 @@ class BacktestEngine:
             if position:
                 position.update_price(price)
             
-            # Get signal from strategy (new signature: timestamp + StrategyData)
-            signal = strategy.on_bar(timestamp, data, balance, position)
+            # Check stop loss / trailing stop BEFORE strategy logic
+            sl_reason = None
+            if position:
+                sl_reason = position.check_stop_loss(price)
             
-            # Process signal
-            if signal.action == "buy" and position is None:
-                # Position size
-                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
-                    size = strategy.config.fixed_size_amount * signal.size
-                else:
-                    size = balance * signal.size * strategy.config.max_position_pct
-                
-                position = Position(
-                    symbol=ticker,
-                    side=Side.LONG,
-                    entry_time=timestamp,
-                    entry_price=price,
-                    size=size,
-                    entry_reason=signal.reason,
-                    metadata={"entry_context": data.snapshot(timestamp)},
-                )
-                entry_bar_idx = idx
-                
-            elif signal.action == "sell" and position is None:
-                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
-                    size = strategy.config.fixed_size_amount * signal.size
-                else:
-                    size = balance * signal.size * strategy.config.max_position_pct
-                
-                position = Position(
-                    symbol=ticker,
-                    side=Side.SHORT,
-                    entry_time=timestamp,
-                    entry_price=price,
-                    size=size,
-                    entry_reason=signal.reason,
-                    metadata={"entry_context": data.snapshot(timestamp)},
-                )
-                entry_bar_idx = idx
-                
-            elif signal.action == "close" and position is not None:
+            if sl_reason and position is not None:
+                # Stop loss triggered — close immediately
                 bars_held = idx - entry_bar_idx
                 trade = position.close(price, timestamp)
                 trade.bars_held = bars_held
-                trade.exit_reason = signal.reason
+                trade.exit_reason = sl_reason
                 trade.costs = costs_1m.total_cost(position.size, bars_held)
                 trade.net_pnl = trade.gross_pnl - trade.costs
-                
-                # Decision context: merge entry + exit snapshots
                 trade.metadata = {
                     "entry_context": position.metadata.get("entry_context", {}),
                     "exit_context": data.snapshot(timestamp),
                 }
-                
                 balance += trade.net_pnl
                 trades.append(trade)
                 position = None
+            else:
+                # Get signal from strategy (new signature: timestamp + StrategyData)
+                signal = strategy.on_bar(timestamp, data, balance, position)
+                
+                # Process signal
+                if signal.action == "buy" and position is None:
+                    # Position size
+                    if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
+                        size = strategy.config.fixed_size_amount * signal.size
+                    else:
+                        size = balance * signal.size * strategy.config.max_position_pct
+                    
+                    # Prevent opening positions with zero or negative balance
+                    if size <= 0:
+                        pass  # Skip — no capital
+                    else:
+                        position = Position(
+                            symbol=ticker,
+                            side=Side.LONG,
+                            entry_time=timestamp,
+                            entry_price=price,
+                            size=size,
+                            entry_reason=signal.reason,
+                            stop_loss_pct=signal.stop_loss_pct,
+                            trailing_stop_pct=signal.trailing_stop_pct,
+                            best_price=price,
+                            metadata={"entry_context": data.snapshot(timestamp)},
+                        )
+                        entry_bar_idx = idx
+                    
+                elif signal.action == "sell" and position is None:
+                    if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
+                        size = strategy.config.fixed_size_amount * signal.size
+                    else:
+                        size = balance * signal.size * strategy.config.max_position_pct
+                    
+                    if size <= 0:
+                        pass  # Skip — no capital
+                    else:
+                        position = Position(
+                            symbol=ticker,
+                            side=Side.SHORT,
+                            entry_time=timestamp,
+                            entry_price=price,
+                            size=size,
+                            entry_reason=signal.reason,
+                            stop_loss_pct=signal.stop_loss_pct,
+                            trailing_stop_pct=signal.trailing_stop_pct,
+                            best_price=price,
+                            metadata={"entry_context": data.snapshot(timestamp)},
+                        )
+                        entry_bar_idx = idx
+                    
+                elif signal.action == "close" and position is not None:
+                    bars_held = idx - entry_bar_idx
+                    trade = position.close(price, timestamp)
+                    trade.bars_held = bars_held
+                    trade.exit_reason = signal.reason
+                    trade.costs = costs_1m.total_cost(position.size, bars_held)
+                    trade.net_pnl = trade.gross_pnl - trade.costs
+                    
+                    # Decision context: merge entry + exit snapshots
+                    trade.metadata = {
+                        "entry_context": position.metadata.get("entry_context", {}),
+                        "exit_context": data.snapshot(timestamp),
+                    }
+                    
+                    balance += trade.net_pnl
+                    trades.append(trade)
+                    position = None
             
             # Compute NAV and drawdown
             unrealized = position.unrealized_pnl if position else 0.0
             nav = balance + unrealized
             
-            # Record bar state
+            # Record bar state — use sl_reason if stop fired, else signal
+            bar_signal = sl_reason if sl_reason else (signal.action if signal.action != "hold" else "")
             bar_records.append({
                 "timestamp": timestamp,
                 "close": price,
@@ -512,7 +547,7 @@ class BacktestEngine:
                 "position_size": position.size if position else 0.0,
                 "position_pnl": unrealized,
                 "position_pnl_pct": (unrealized / position.size * 100) if position and position.size > 0 else 0.0,
-                "signal": signal.action if signal.action != "hold" else "",
+                "signal": bar_signal,
             })
         
         # Close any open position at end
