@@ -9,8 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+import numpy as np
 import pandas as pd
 import io
 
@@ -78,7 +79,17 @@ async def data_preview(
             df = df[df.index <= end_dt]
 
         summary = get_data_summary(df)
-        report = validate_ohlcv(df, interval)
+        raw_report = validate_ohlcv(df, interval)
+        report = {
+            "total_bars": raw_report.total_bars,
+            "expected_bars": raw_report.expected_bars,
+            "coverage_pct": round(raw_report.coverage_pct, 2),
+            "is_valid": raw_report.is_valid,
+            "gap_count": raw_report.gap_count,
+            "total_missing_bars": raw_report.total_missing_bars,
+            "null_count": raw_report.null_count,
+            "zero_volume_count": raw_report.zero_volume_count,
+        }
 
         total_rows = len(df)
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -88,7 +99,7 @@ async def data_preview(
         table_df = df.iloc[start_idx:end_idx]
 
         table_data = _prepare_table_data(table_df)
-        chart_data = _prepare_chart_data(df, max_points=50000)
+        chart_data = _prepare_chart_data(df)
 
         date_range = {
             "min": df.index.min().strftime("%Y-%m-%d") if len(df) > 0 else "",
@@ -97,7 +108,7 @@ async def data_preview(
             "end": end_date or "",
         }
 
-        return {
+        return _json_response({
             "venue": venue,
             "market": market,
             "ticker": ticker,
@@ -115,7 +126,7 @@ async def data_preview(
                 "total_pages": total_pages,
             },
             "date_range": date_range,
-        }
+        })
     except Exception as e:
         return {"error": str(e)}
 
@@ -262,42 +273,72 @@ async def export_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _prepare_chart_data(df, max_points: int = 2000) -> dict:
-    """Prepare OHLCV data for Plotly chart."""
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy/pandas types."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            v = float(obj)
+            return 0.0 if np.isnan(v) else v
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, pd.Timestamp):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+def _json_response(data: dict) -> JSONResponse:
+    """Return a JSONResponse using our numpy-safe encoder."""
+    content = json.loads(json.dumps(data, cls=_NumpyEncoder))
+    return JSONResponse(content=content)
+
+
+def _prepare_chart_data(df) -> dict:
+    """Prepare OHLCV data as lightweight-charts-compatible objects.
+
+    Returns {ohlcv: [...], volume: [...]}.  Each item has ``time``
+    as a UTC unix-epoch second (int) which lightweight-charts renders
+    natively.  No down-sampling — LC handles 100k+ bars on canvas.
+    """
     if len(df) == 0:
-        return {"timestamps": [], "open": [], "high": [], "low": [], "close": [], "volume": []}
-    
-    # Sample if too many points
-    if len(df) > max_points:
-        step = len(df) // max_points
-        df = df.iloc[::step]
-    
-    # Fill NaN values to avoid JSON issues
+        return {"ohlcv": [], "volume": []}
+
     df = df.fillna(0)
-    
-    return {
-        "timestamps": [t.isoformat() for t in df.index],
-        "open": df["open"].tolist(),
-        "high": df["high"].tolist(),
-        "low": df["low"].tolist(),
-        "close": df["close"].tolist(),
-        "volume": df["volume"].tolist(),
-    }
+
+    ohlcv = []
+    volume = []
+    for ts, row in df.iterrows():
+        t = int(ts.timestamp())  # UTC epoch seconds
+        ohlcv.append({
+            "time": t,
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+        })
+        if "volume" in df.columns:
+            color = "#22c55e80" if row["close"] >= row["open"] else "#ef444480"
+            volume.append({"time": t, "value": float(row["volume"]), "color": color})
+
+    return {"ohlcv": ohlcv, "volume": volume}
 
 
 def _prepare_table_data(df) -> list[dict]:
-    """Prepare OHLCV data for table display."""
+    """Return raw numeric table rows — the frontend handles formatting."""
     if len(df) == 0:
         return []
-    
+
     records = []
     for ts, row in df.iterrows():
         records.append({
-            "timestamp": ts.strftime("%Y-%m-%d %H:%M"),
-            "open": f"{row['open']:.2f}",
-            "high": f"{row['high']:.2f}",
-            "low": f"{row['low']:.2f}",
-            "close": f"{row['close']:.2f}",
-            "volume": f"{row['volume']:,.0f}",
+            "timestamp": ts.isoformat(),
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": float(row["volume"]),
         })
     return records

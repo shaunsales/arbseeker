@@ -8,6 +8,45 @@ export interface DataTreeResponse {
   intervals: string[];
 }
 
+export interface OhlcvBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface VolumeBar {
+  time: number;
+  value: number;
+  color: string;
+}
+
+export interface OhlcvChartData {
+  ohlcv: OhlcvBar[];
+  volume: VolumeBar[];
+}
+
+export interface OhlcvTableRow {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface ValidationReport {
+  total_bars: number;
+  expected_bars: number;
+  coverage_pct: number;
+  is_valid: boolean;
+  gap_count: number;
+  total_missing_bars: number;
+  null_count: number;
+  zero_volume_count: number;
+}
+
 export interface DataPreviewResponse {
   venue: string;
   market: string;
@@ -16,16 +55,9 @@ export interface DataPreviewResponse {
   available_periods: string[];
   selected_periods: string[];
   summary: Record<string, unknown>;
-  report: Record<string, unknown>;
-  chart_data: {
-    timestamps: string[];
-    open: number[];
-    high: number[];
-    low: number[];
-    close: number[];
-    volume: number[];
-  };
-  table_data: Record<string, string>[];
+  report: ValidationReport;
+  chart_data: OhlcvChartData;
+  table_data: OhlcvTableRow[];
   pagination: Pagination;
   date_range: {
     min: string;

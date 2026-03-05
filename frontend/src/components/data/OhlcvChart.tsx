@@ -6,34 +6,28 @@ import {
   CandlestickSeries,
   HistogramSeries,
 } from "lightweight-charts";
-
-interface ChartData {
-  timestamps: string[];
-  open: number[];
-  high: number[];
-  low: number[];
-  close: number[];
-  volume: number[];
-}
+import type { OhlcvChartData } from "@/types/api";
 
 interface Props {
-  chartData: ChartData;
+  chartData: OhlcvChartData;
+  height?: number;
 }
 
-export default function OhlcvChart({ chartData }: Props) {
-  const priceRef = useRef<HTMLDivElement>(null);
-  const volumeRef = useRef<HTMLDivElement>(null);
-  const chartsRef = useRef<IChartApi[]>([]);
+export default function OhlcvChart({ chartData, height = 400 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
-    chartsRef.current.forEach((c) => c.remove());
-    chartsRef.current = [];
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+    if (!containerRef.current || !chartData.ohlcv.length) return;
 
-    if (!chartData.timestamps.length) return;
-
-    const chartOptions = {
+    const chart = createChart(containerRef.current, {
+      height,
       layout: {
-        background: { type: ColorType.Solid as const, color: "#111827" },
+        background: { type: ColorType.Solid, color: "#111827" },
         textColor: "#9ca3af",
       },
       grid: {
@@ -42,81 +36,53 @@ export default function OhlcvChart({ chartData }: Props) {
       },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: "#374151" },
-      timeScale: { borderColor: "#374151", timeVisible: true },
-    };
+      timeScale: {
+        borderColor: "#374151",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
+    chartRef.current = chart;
 
-    // Build data arrays
-    const ohlcv = chartData.timestamps.map((t, i) => ({
-      time: t,
-      open: chartData.open[i],
-      high: chartData.high[i],
-      low: chartData.low[i],
-      close: chartData.close[i],
-    }));
+    // Candlestick series
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderDownColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+    });
+    candleSeries.setData(chartData.ohlcv as never[]);
 
-    const volume = chartData.timestamps.map((t, i) => ({
-      time: t,
-      value: chartData.volume[i],
-      color: chartData.close[i] >= chartData.open[i] ? "#22c55e80" : "#ef444480",
-    }));
-
-    // Price chart
-    if (priceRef.current) {
-      const chart = createChart(priceRef.current, {
-        ...chartOptions,
-        height: 320,
-      });
-      chartsRef.current.push(chart);
-
-      const candleSeries = chart.addSeries(CandlestickSeries, {
-        upColor: "#22c55e",
-        downColor: "#ef4444",
-        borderDownColor: "#ef4444",
-        borderUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
-        wickUpColor: "#22c55e",
-      });
-      candleSeries.setData(ohlcv as never[]);
-      chart.timeScale().fitContent();
-    }
-
-    // Volume chart
-    if (volumeRef.current) {
-      const chart = createChart(volumeRef.current, {
-        ...chartOptions,
-        height: 80,
-      });
-      chartsRef.current.push(chart);
-
+    // Volume as overlay on bottom of same chart
+    if (chartData.volume.length) {
       const volSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: "volume" },
-        priceScaleId: "",
+        priceScaleId: "vol",
       });
-      volSeries.setData(volume as never[]);
-      chart.timeScale().fitContent();
+      volSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
+      volSeries.setData(chartData.volume as never[]);
     }
 
-    // Sync time scales
-    if (chartsRef.current.length === 2) {
-      const [price, vol] = chartsRef.current;
-      price.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) vol.timeScale().setVisibleLogicalRange(range);
-      });
-      vol.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) price.timeScale().setVisibleLogicalRange(range);
-      });
-    }
+    chart.timeScale().fitContent();
+
+    // Resize observer
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        chart.applyOptions({ width: entry.contentRect.width });
+      }
+    });
+    ro.observe(containerRef.current);
 
     return () => {
-      chartsRef.current.forEach((c) => c.remove());
-      chartsRef.current = [];
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
     };
-  }, [chartData]);
+  }, [chartData, height]);
 
-  return (
-    <div className="space-y-1">
-      <div ref={priceRef} className="rounded bg-gray-900" />
-      <div ref={volumeRef} className="rounded bg-gray-900" />
-    </div>
-  );
+  return <div ref={containerRef} className="rounded bg-gray-900" />;
 }
