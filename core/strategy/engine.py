@@ -591,6 +591,34 @@ class BacktestEngine:
             trades_path = results_dir / f"{run_id}_trades.parquet"
             trades_df.to_parquet(trades_path)
         
+        # QuantStats: generate tearsheet + metrics
+        qs_metrics = {}
+        tearsheet_path = None
+        try:
+            import quantstats as qs
+            
+            # QuantStats needs a returns Series (not equity)
+            returns = equity_curve.pct_change().dropna()
+            
+            if len(returns) > 1 and returns.std() > 0:
+                # Compute key metrics via quantstats
+                qs_metrics = _compute_quantstats_metrics(returns)
+                
+                # Generate HTML tearsheet
+                tearsheet_path = results_dir / f"{run_id}_tearsheet.html"
+                qs.reports.html(
+                    returns,
+                    output=str(tearsheet_path),
+                    title=f"{strategy.name} Backtest",
+                    download_filename=str(tearsheet_path),
+                )
+                
+                if self.verbose:
+                    print(f"QuantStats tearsheet: {tearsheet_path}")
+        except Exception as e:
+            if self.verbose:
+                print(f"QuantStats generation skipped: {e}")
+        
         # Save metadata JSON
         meta = {
             "run_id": run_id,
@@ -603,7 +631,9 @@ class BacktestEngine:
             "initial_capital": capital,
             "final_capital": balance,
             "metrics": result.summary(),
+            "quantstats": qs_metrics,
             "total_trades": len(trades),
+            "tearsheet": str(tearsheet_path) if tearsheet_path else None,
         }
         meta_path = results_dir / f"{run_id}_meta.json"
         with open(meta_path, "w") as f:
@@ -615,6 +645,10 @@ class BacktestEngine:
             if trades:
                 print(f"  {run_id}_trades.parquet ({len(trades)} trades)")
             print(f"  {run_id}_meta.json")
+            if qs_metrics:
+                print(f"\n--- QuantStats ---")
+                for k, v in qs_metrics.items():
+                    print(f"  {k}: {v}")
             result.print_report()
         
         return result
@@ -986,3 +1020,49 @@ class BacktestEngine:
         result.compute_metrics()
         
         return result
+
+
+# ---------------------------------------------------------------------------
+# QuantStats helper
+# ---------------------------------------------------------------------------
+
+def _compute_quantstats_metrics(returns: pd.Series) -> dict:
+    """
+    Compute key performance metrics using quantstats.
+    
+    Returns a dict of metrics suitable for JSON serialisation.
+    """
+    import quantstats as qs
+    
+    def _safe(fn, *args, **kwargs):
+        try:
+            v = fn(*args, **kwargs)
+            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+                return None
+            return round(float(v), 4) if isinstance(v, (int, float, np.floating)) else v
+        except Exception:
+            return None
+    
+    # Use periods_per_year for 1m bars (525,600 per year)
+    ppy = 525_600
+    
+    return {
+        "total_return": _safe(qs.stats.comp, returns),
+        "cagr": _safe(qs.stats.cagr, returns, compounded=True),
+        "sharpe": _safe(qs.stats.sharpe, returns, periods=ppy),
+        "sortino": _safe(qs.stats.sortino, returns, periods=ppy),
+        "calmar": _safe(qs.stats.calmar, returns),
+        "max_drawdown": _safe(qs.stats.max_drawdown, returns),
+        "avg_drawdown": _safe(qs.stats.avg_loss, returns),
+        "volatility": _safe(qs.stats.volatility, returns, periods=ppy),
+        "win_rate": _safe(qs.stats.win_rate, returns),
+        "avg_win": _safe(qs.stats.avg_win, returns),
+        "avg_loss": _safe(qs.stats.avg_loss, returns),
+        "payoff_ratio": _safe(qs.stats.payoff_ratio, returns),
+        "profit_factor": _safe(qs.stats.profit_factor, returns),
+        "ulcer_index": _safe(qs.stats.ulcer_index, returns),
+        "value_at_risk": _safe(qs.stats.value_at_risk, returns),
+        "expected_shortfall": _safe(qs.stats.expected_return, returns),
+        "skew": _safe(qs.stats.skew, returns),
+        "kurtosis": _safe(qs.stats.kurtosis, returns),
+    }
