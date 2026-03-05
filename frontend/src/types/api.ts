@@ -1,46 +1,78 @@
 // ── Data page types ──
 
-export interface Ticker {
-  symbol: string;
+// data_tree: { venue: { market: { ticker: { interval: period[] } } } }
+export type DataTree = Record<string, Record<string, Record<string, Record<string, string[]>>>>;
+
+export interface DataTreeResponse {
+  data_tree: DataTree;
+  intervals: string[];
+}
+
+export interface DataPreviewResponse {
+  venue: string;
+  market: string;
+  ticker: string;
+  interval: string;
+  available_periods: string[];
+  selected_periods: string[];
+  summary: Record<string, unknown>;
+  report: Record<string, unknown>;
+  chart_data: {
+    timestamps: string[];
+    open: number[];
+    high: number[];
+    low: number[];
+    close: number[];
+    volume: number[];
+  };
+  table_data: Record<string, string>[];
+  pagination: Pagination;
+  date_range: {
+    min: string;
+    max: string;
+    start: string;
+    end: string;
+  };
+  error?: string;
+}
+
+export interface DownloadResponse {
+  job_id: string;
   status: string;
-  base_asset: string;
-  quote_asset: string;
-  contract_type?: string;
 }
 
-export interface DataStatus {
-  symbol: string;
-  interval: string;
-  bars: number;
-  start: string;
-  end: string;
-  file_size: number;
-  file_path: string;
-}
-
-export interface DownloadRequest {
-  symbol: string;
-  interval: string;
-  start_date: string;
-  end_date: string;
+export interface Pagination {
+  page: number;
+  page_size: number;
+  total_rows: number;
+  total_pages: number;
 }
 
 // ── Basis page types ──
 
-export interface BasisRow {
-  symbol: string;
-  mark_price: number;
-  index_price: number;
-  basis_bps: number;
-  funding_rate: number;
-  annualized_funding: number;
-  open_interest: number;
-  volume_24h: number;
+export interface BasisFileInfo {
+  ticker: string;
+  interval: string;
+  periods: string[];
+  path: string;
 }
 
-export interface BasisSnapshot {
-  timestamp: string;
-  rows: BasisRow[];
+export interface BasisPreviewResponse {
+  ticker: string;
+  interval: string;
+  chart_interval: string;
+  quote_venues: string[];
+  stats: {
+    bars: number;
+    start: string;
+    end: string;
+    quality_ok: number;
+    quality_pct: number;
+    quality_breakdown: Record<string, number>;
+  };
+  venue_stats: Record<string, Record<string, unknown>>;
+  chart_data: Record<string, { time: number; value: number; color?: string }[]>;
+  error?: string;
 }
 
 // ── Strategy page types ──
@@ -122,10 +154,5 @@ export interface PreviewData {
   separate_cols: string[];
   all_cols: string[];
   table_data: Record<string, string | number>[];
-  pagination: {
-    page: number;
-    page_size: number;
-    total_rows: number;
-    total_pages: number;
-  };
+  pagination: Pagination;
 }
