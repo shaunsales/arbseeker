@@ -25,6 +25,9 @@ export interface VolumeBar {
 export interface OhlcvChartData {
   ohlcv: OhlcvBar[];
   volume: VolumeBar[];
+  resampled: boolean;
+  chart_interval: string | null;
+  original_bars: number;
 }
 
 export interface OhlcvTableRow {

@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { getDataTree } from "@/api/data";
 import DataTree from "@/components/data/DataTree";
-import DataDownload from "@/components/data/DataDownload";
 import DataPreview from "@/components/data/DataPreview";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Download } from "lucide-react";
 
 interface Selection {
   venue: string;
@@ -17,7 +18,7 @@ interface Selection {
 export default function DataPage() {
   const [selected, setSelected] = useState<Selection | null>(null);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["data-tree"],
     queryFn: getDataTree,
   });
@@ -48,10 +49,13 @@ export default function DataPage() {
         </ScrollArea>
 
         <div className="border-t border-gray-800 p-3">
-          <DataDownload
-            intervals={data?.intervals ?? []}
-            onComplete={() => refetch()}
-          />
+          <Link
+            to="/download"
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-xs font-medium text-gray-300 transition hover:bg-gray-700 hover:text-white"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download New Data
+          </Link>
         </div>
       </div>
 
@@ -71,7 +75,7 @@ export default function DataPage() {
                 Select a dataset from the sidebar to preview
               </p>
               <p className="mt-1 text-xs text-gray-600">
-                Or download new data using the panel below
+                Or use the <Link to="/download" className="text-blue-400 hover:underline">Download</Link> page to get new data
               </p>
             </div>
           </div>

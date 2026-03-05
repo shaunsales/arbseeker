@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { Database, TrendingUp, FlaskConical, Play } from "lucide-react";
+import { Database, TrendingUp, FlaskConical, Play, Download } from "lucide-react";
 
 const navItems = [
   { to: "/data", label: "Data", icon: Database },
+  { to: "/download", label: "Download", icon: Download },
   { to: "/basis", label: "Basis", icon: TrendingUp },
   { to: "/strategy", label: "Strategy", icon: FlaskConical },
   { to: "/backtest", label: "Backtest", icon: Play },

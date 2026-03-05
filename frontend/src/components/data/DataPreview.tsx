@@ -111,7 +111,20 @@ export default function DataPreview({ venue, market, ticker, interval }: Props) 
       </div>
 
       {/* Chart */}
-      {tab === "chart" && <OhlcvChart chartData={data.chart_data} />}
+      {tab === "chart" && (
+        <div className="space-y-2">
+          {data.chart_data.resampled && (
+            <div className="flex items-center gap-2 rounded border border-amber-900/50 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-300">
+              <span>
+                Showing <span className="font-semibold">{data.chart_data.chart_interval}</span> aggregation
+                of {data.chart_data.original_bars.toLocaleString()} bars
+                ({data.chart_data.ohlcv.length.toLocaleString()} chart bars)
+              </span>
+            </div>
+          )}
+          <OhlcvChart chartData={data.chart_data} />
+        </div>
+      )}
 
       {/* Table */}
       {tab === "table" && (

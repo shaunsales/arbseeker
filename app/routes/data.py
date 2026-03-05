@@ -296,22 +296,58 @@ def _json_response(data: dict) -> JSONResponse:
     return JSONResponse(content=content)
 
 
-def _prepare_chart_data(df) -> dict:
+RESAMPLE_LADDER = [
+    ("1min", "1m"),
+    ("5min", "5m"),
+    ("15min", "15m"),
+    ("1h", "1h"),
+    ("4h", "4h"),
+    ("1D", "1d"),
+]
+
+
+def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resample OHLCV dataframe to a coarser interval using proper aggregation."""
+    return df.resample(rule).agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }).dropna(subset=["open"])
+
+
+def _prepare_chart_data(df, max_bars: int = 8000) -> dict:
     """Prepare OHLCV data as lightweight-charts-compatible objects.
 
-    Returns {ohlcv: [...], volume: [...]}.  Each item has ``time``
-    as a UTC unix-epoch second (int) which lightweight-charts renders
-    natively.  No down-sampling — LC handles 100k+ bars on canvas.
+    When the dataset exceeds *max_bars*, it is resampled to a coarser
+    interval so the chart can render the **entire** date range smoothly.
+    Returns metadata about any resampling that was applied.
     """
     if len(df) == 0:
-        return {"ohlcv": [], "volume": []}
+        return {"ohlcv": [], "volume": [], "resampled": False, "chart_interval": None, "original_bars": 0}
+
+    original_bars = len(df)
+    chart_interval = None
+
+    if len(df) > max_bars:
+        for rule, label in RESAMPLE_LADDER:
+            candidate = _resample_ohlcv(df, rule)
+            if len(candidate) <= max_bars:
+                df = candidate
+                chart_interval = label
+                break
+        else:
+            # Even daily is too many — just use daily
+            df = _resample_ohlcv(df, "1D")
+            chart_interval = "1d"
 
     df = df.fillna(0)
 
     ohlcv = []
     volume = []
     for ts, row in df.iterrows():
-        t = int(ts.timestamp())  # UTC epoch seconds
+        t = int(ts.timestamp())
         ohlcv.append({
             "time": t,
             "open": float(row["open"]),
@@ -323,7 +359,13 @@ def _prepare_chart_data(df) -> dict:
             color = "#22c55e80" if row["close"] >= row["open"] else "#ef444480"
             volume.append({"time": t, "value": float(row["volume"]), "color": color})
 
-    return {"ohlcv": ohlcv, "volume": volume}
+    return {
+        "ohlcv": ohlcv,
+        "volume": volume,
+        "resampled": chart_interval is not None,
+        "chart_interval": chart_interval,
+        "original_bars": original_bars,
+    }
 
 
 def _prepare_table_data(df) -> list[dict]:
