@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getAvailableDates, buildStrategy } from "@/api/strategy";
 import { Button } from "@/components/ui/button";
+import MonthRangePicker from "./MonthRangePicker";
 import type { AvailableDates } from "@/types/api";
 
 interface Props {
@@ -53,7 +54,7 @@ export default function BuildControls({ className, onBuilt }: Props) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900 p-4 space-y-4">
+    <div className="rounded-lg border border-gray-800 bg-gray-900 p-5 space-y-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
         Build Data
       </h3>
@@ -64,45 +65,15 @@ export default function BuildControls({ className, onBuilt }: Props) {
         <p className="text-xs text-red-400">Failed to load available dates</p>
       ) : (
         <>
-          {/* Date range inputs */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-400">
-                Start Date
-              </label>
-              <input
-                type="month"
-                value={startDate}
-                min={dates.earliest_start}
-                max={dates.latest_end}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-gray-400">
-                End Date
-              </label>
-              <input
-                type="month"
-                value={endDate}
-                min={dates.earliest_start}
-                max={dates.latest_end}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2.5 text-sm text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-              />
-            </div>
-          </div>
-
-          {/* Available date ranges */}
-          <div className="text-xs text-gray-500">
-            {Object.entries(dates.per_interval).map(([iv, info]) => (
-              <span key={iv} className="mr-3">
-                <span className="text-gray-400">{iv}:</span>{" "}
-                {info.start} → {info.end}
-              </span>
-            ))}
-          </div>
+          <MonthRangePicker
+            dates={dates}
+            startDate={startDate}
+            endDate={endDate}
+            onRangeChange={(s, e) => {
+              setStartDate(s);
+              setEndDate(e);
+            }}
+          />
 
           <Button
             onClick={handleBuild}
