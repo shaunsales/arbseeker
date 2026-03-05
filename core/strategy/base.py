@@ -16,6 +16,7 @@ from typing import Optional
 import pandas as pd
 
 from core.strategy.position import Signal, Position, CostModel
+from core.strategy.data import StrategyDataSpec
 
 
 @dataclass
@@ -85,10 +86,36 @@ class SingleAssetStrategy(ABC):
         """Strategy name for display."""
         return self.config.name or self.__class__.__name__
     
+    def data_spec(self) -> Optional[StrategyDataSpec]:
+        """
+        Declare the data this strategy requires.
+        
+        Returns a StrategyDataSpec defining venue, market, ticker, and
+        intervals with indicators. The web UI reads this to build data files,
+        and the engine validates against it before running.
+        
+        Returns None for legacy strategies that use required_indicators() instead.
+        
+        Example:
+            return StrategyDataSpec(
+                venue="binance",
+                market="futures",
+                ticker="BTCUSDT",
+                intervals={
+                    "1m": [],
+                    "1h": [("adx", {"length": 14}), ("sma", {"length": 50})],
+                },
+            )
+        """
+        return None
+    
     @abstractmethod
     def required_indicators(self) -> list[tuple[str, dict]]:
         """
         Return list of indicators to pre-compute.
+        
+        LEGACY: For new strategies, prefer data_spec() which supports
+        multi-interval data. This method is used by the old engine path.
         
         Returns:
             List of (indicator_name, params) tuples

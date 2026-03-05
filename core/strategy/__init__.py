@@ -16,6 +16,12 @@ from core.strategy.base import (
     DataSpec,
     StrategyConfig,
 )
+from core.strategy.data import (
+    StrategyDataSpec,
+    StrategyData,
+    StrategyDataBuilder,
+    StrategyDataValidator,
+)
 from core.strategy.engine import (
     BacktestEngine,
     BacktestResult,
@@ -36,6 +42,11 @@ __all__ = [
     "MultiLeggedStrategy",
     "DataSpec",
     "StrategyConfig",
+    # Strategy data
+    "StrategyDataSpec",
+    "StrategyData",
+    "StrategyDataBuilder",
+    "StrategyDataValidator",
     # Engine
     "BacktestEngine",
     "BacktestResult",
