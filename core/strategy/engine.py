@@ -8,8 +8,10 @@ Handles:
 - Result aggregation and metrics calculation
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Union
 import pandas as pd
 import numpy as np
@@ -18,6 +20,12 @@ from core.data.storage import load_ohlcv
 from core.indicators import compute_indicators
 from core.strategy.base import SingleAssetStrategy, MultiLeggedStrategy, DataSpec
 from core.strategy.basis_strategy import BasisStrategy, BasisPosition, BasisSignal
+from core.strategy.data import (
+    StrategyData,
+    StrategyDataValidator,
+    strategy_folder,
+    _serialise_value,
+)
 from core.strategy.position import (
     Position, Trade, Signal, CostModel, Side, PositionStatus,
     DEFAULT_COSTS,
@@ -196,6 +204,9 @@ class BacktestEngine:
         if isinstance(strategy, BasisStrategy):
             return self._run_basis(strategy, capital, costs)
         elif isinstance(strategy, SingleAssetStrategy):
+            # Use v2 path if strategy defines data_spec()
+            if strategy.data_spec() is not None:
+                return self._run_single_asset_v2(strategy, capital, costs)
             return self._run_single_asset(
                 strategy, data, capital, costs,
                 venue, market, ticker, interval, years
@@ -345,6 +356,266 @@ class BacktestEngine:
         result.final_capital = current_capital
         result.equity_curve = pd.Series(equity_curve, index=data.index)
         result.compute_metrics()
+        
+        return result
+    
+    # ------------------------------------------------------------------
+    # V2: Multi-interval single-asset engine
+    # ------------------------------------------------------------------
+    
+    def _run_single_asset_v2(
+        self,
+        strategy: SingleAssetStrategy,
+        capital: float,
+        costs: CostModel,
+    ) -> BacktestResult:
+        """
+        Run backtest for a strategy that defines data_spec().
+        
+        Iterates 1m bars with look-ahead-safe multi-interval data access.
+        Records bar-level state, captures decision context on trades.
+        Saves results to the strategy output folder.
+        """
+        spec = strategy.data_spec()
+        folder = strategy_folder(strategy.name)
+        
+        # Validate data exists
+        errors = StrategyDataValidator.validate(strategy.name, spec)
+        if errors:
+            raise ValueError(
+                f"Strategy data validation failed:\n" +
+                "\n".join(f"  - {e}" for e in errors)
+            )
+        
+        # Load multi-interval data
+        data = StrategyData.from_strategy_folder(folder, spec)
+        if self.verbose:
+            for iv in spec.intervals:
+                n = len(data._frames[iv])
+                print(f"Loaded {iv}: {n:,} bars")
+        
+        # Get the 1m DataFrame — this drives the iteration
+        df_1m = data._frames["1m"]
+        ticker = spec.ticker
+        
+        # Costs: override bars_per_day for 1m bars
+        costs_1m = CostModel(
+            commission_bps=costs.commission_bps,
+            slippage_bps=costs.slippage_bps,
+            funding_daily_bps=costs.funding_daily_bps,
+            bars_per_day=1440,
+        )
+        
+        # Initialize result
+        result = BacktestResult(
+            strategy_name=strategy.name,
+            config={
+                "capital": capital,
+                "costs": costs_1m.__dict__,
+                "spec": spec.to_dict(),
+            },
+            start_time=df_1m.index[0],
+            end_time=df_1m.index[-1],
+            total_bars=len(df_1m),
+            initial_capital=capital,
+        )
+        
+        # Initialize state
+        balance = capital  # Realised capital — changes only on trade close
+        position: Optional[Position] = None
+        trades: list[Trade] = []
+        entry_bar_idx = 0
+        
+        # Bar-level recording
+        bar_records: list[dict] = []
+        
+        if self.verbose:
+            print(f"Running {strategy.name} on {len(df_1m):,} 1m bars...")
+        
+        # Main backtest loop — iterate 1m bars
+        for idx in range(len(df_1m)):
+            timestamp = df_1m.index[idx]
+            price = df_1m.iloc[idx]["close"]
+            
+            # Update position mark-to-market
+            if position:
+                position.update_price(price)
+            
+            # Get signal from strategy (new signature: timestamp + StrategyData)
+            signal = strategy.on_bar(timestamp, data, balance, position)
+            
+            # Process signal
+            if signal.action == "buy" and position is None:
+                # Position size
+                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
+                    size = strategy.config.fixed_size_amount * signal.size
+                else:
+                    size = balance * signal.size * strategy.config.max_position_pct
+                
+                position = Position(
+                    symbol=ticker,
+                    side=Side.LONG,
+                    entry_time=timestamp,
+                    entry_price=price,
+                    size=size,
+                    entry_reason=signal.reason,
+                    metadata={"entry_context": data.snapshot(timestamp)},
+                )
+                entry_bar_idx = idx
+                
+            elif signal.action == "sell" and position is None:
+                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
+                    size = strategy.config.fixed_size_amount * signal.size
+                else:
+                    size = balance * signal.size * strategy.config.max_position_pct
+                
+                position = Position(
+                    symbol=ticker,
+                    side=Side.SHORT,
+                    entry_time=timestamp,
+                    entry_price=price,
+                    size=size,
+                    entry_reason=signal.reason,
+                    metadata={"entry_context": data.snapshot(timestamp)},
+                )
+                entry_bar_idx = idx
+                
+            elif signal.action == "close" and position is not None:
+                bars_held = idx - entry_bar_idx
+                trade = position.close(price, timestamp)
+                trade.bars_held = bars_held
+                trade.exit_reason = signal.reason
+                trade.costs = costs_1m.total_cost(position.size, bars_held)
+                trade.net_pnl = trade.gross_pnl - trade.costs
+                
+                # Decision context: merge entry + exit snapshots
+                trade.metadata = {
+                    "entry_context": position.metadata.get("entry_context", {}),
+                    "exit_context": data.snapshot(timestamp),
+                }
+                
+                balance += trade.net_pnl
+                trades.append(trade)
+                position = None
+            
+            # Compute NAV and drawdown
+            unrealized = position.unrealized_pnl if position else 0.0
+            nav = balance + unrealized
+            
+            # Record bar state
+            bar_records.append({
+                "timestamp": timestamp,
+                "close": price,
+                "balance": balance,
+                "nav": nav,
+                "position_side": position.side.value if position else "flat",
+                "position_size": position.size if position else 0.0,
+                "position_pnl": unrealized,
+                "position_pnl_pct": (unrealized / position.size * 100) if position and position.size > 0 else 0.0,
+                "signal": signal.action if signal.action != "hold" else "",
+            })
+        
+        # Close any open position at end
+        if position:
+            idx = len(df_1m) - 1
+            price = df_1m.iloc[-1]["close"]
+            bars_held = idx - entry_bar_idx
+            trade = position.close(price, df_1m.index[-1])
+            trade.bars_held = bars_held
+            trade.exit_reason = "end_of_data"
+            trade.costs = costs_1m.total_cost(position.size, bars_held)
+            trade.net_pnl = trade.gross_pnl - trade.costs
+            trade.metadata = {
+                "entry_context": position.metadata.get("entry_context", {}),
+                "exit_context": data.snapshot(df_1m.index[-1]),
+            }
+            
+            balance += trade.net_pnl
+            trades.append(trade)
+            
+            # Update last bar record
+            bar_records[-1]["balance"] = balance
+            bar_records[-1]["nav"] = balance
+            bar_records[-1]["position_side"] = "flat"
+            bar_records[-1]["position_size"] = 0.0
+            bar_records[-1]["position_pnl"] = 0.0
+            bar_records[-1]["position_pnl_pct"] = 0.0
+        
+        # Build bar-level DataFrame
+        bars_df = pd.DataFrame(bar_records)
+        bars_df = bars_df.set_index("timestamp")
+        
+        # Compute drawdown from peak NAV
+        peak_nav = bars_df["nav"].cummax()
+        bars_df["drawdown_pct"] = ((bars_df["nav"] - peak_nav) / peak_nav * 100)
+        
+        # Build equity curve for BacktestResult compatibility
+        equity_curve = bars_df["nav"]
+        
+        # Build result
+        result.trades = trades
+        result.final_capital = balance
+        result.equity_curve = equity_curve
+        result.compute_metrics()
+        
+        # Save results to strategy folder
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = folder / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save bar-level parquet
+        bars_path = results_dir / f"{run_id}_bars.parquet"
+        bars_df.to_parquet(bars_path)
+        
+        # Save trades parquet
+        if trades:
+            trades_data = []
+            for t in trades:
+                trades_data.append({
+                    "symbol": t.symbol,
+                    "side": t.side.value if t.side else "",
+                    "entry_time": t.entry_time,
+                    "entry_price": t.entry_price,
+                    "exit_time": t.exit_time,
+                    "exit_price": t.exit_price,
+                    "size": t.size,
+                    "gross_pnl": t.gross_pnl,
+                    "costs": t.costs,
+                    "net_pnl": t.net_pnl,
+                    "bars_held": t.bars_held,
+                    "entry_reason": t.entry_reason,
+                    "exit_reason": t.exit_reason,
+                    "context": json.dumps(t.metadata, default=str),
+                })
+            trades_df = pd.DataFrame(trades_data)
+            trades_path = results_dir / f"{run_id}_trades.parquet"
+            trades_df.to_parquet(trades_path)
+        
+        # Save metadata JSON
+        meta = {
+            "run_id": run_id,
+            "strategy_name": strategy.name,
+            "spec": spec.to_dict(),
+            "config": result.config,
+            "start_time": str(result.start_time),
+            "end_time": str(result.end_time),
+            "total_bars": result.total_bars,
+            "initial_capital": capital,
+            "final_capital": balance,
+            "metrics": result.summary(),
+            "total_trades": len(trades),
+        }
+        meta_path = results_dir / f"{run_id}_meta.json"
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2, default=str)
+        
+        if self.verbose:
+            print(f"\nResults saved to {results_dir}/")
+            print(f"  {run_id}_bars.parquet ({len(bars_df):,} bars)")
+            if trades:
+                print(f"  {run_id}_trades.parquet ({len(trades)} trades)")
+            print(f"  {run_id}_meta.json")
+            result.print_report()
         
         return result
     
