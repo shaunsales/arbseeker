@@ -14,7 +14,7 @@ See `README.md` for quick start and `docs/PLATFORM_OVERVIEW.md` for architecture
 - [x] Hyperliquid S3 trade downloader (`core/data/hyperliquid_s3.py`)
 - [x] Hyperliquid LZ4-to-OHLCV builder (`core/data/hyperliquid_build.py`)
 - [x] Binance Vision klines downloader (`core/data/binance.py`)
-- [x] Web app (FastAPI + HTMX 2.0 + Alpine.js)
+- [x] Web app (FastAPI JSON API + React SPA frontend)
 - [x] Remove legacy files
 
 ---
@@ -46,7 +46,7 @@ Computed at runtime (NOT stored):
 - [x] Show data quality metrics (gaps, coverage %, bar count)
 - [x] Downloadable CSV/Parquet export buttons
 - [x] Chart/Table tabs with paginated data table
-- [x] HTMX 2.0 + Alpine.js migration with loading indicators
+- [x] React SPA with TanStack Table + lightweight-charts (migrated from HTMX/Alpine)
 
 ### 1.3 Update Downloaders ✅
 - [x] Binance Vision monthly klines downloader (`core/data/binance.py`)
@@ -115,22 +115,36 @@ See [`docs/GOLD_BASIS_ARB.md`](docs/GOLD_BASIS_ARB.md) — separate project for 
 
 See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) for full detail.
 
-### 3A — Strategy Data Builder
-- [ ] `StrategyDataSpec` + manifest schema
-- [ ] Data builder (download OHLCV, compute indicators, save parquets per interval)
-- [ ] Web UI — strategy data builder page
+### 3A — Strategy Data Builder ✅
+- [x] `StrategyDataSpec` + manifest schema
+- [x] Data builder (download OHLCV, compute indicators, save parquets per interval)
+- [x] Backend API — strategy endpoints (JSON)
+- [x] Web UI — React strategy data builder page
 
-### 3B — Backtest Engine v2
-- [ ] `StrategyData` multi-interval accessor (look-ahead-safe)
-- [ ] Refactored strategy interface (always 1m execution, multi-interval reads)
+### 3B — Backtest Engine v2 (partial)
+- [x] `StrategyData` multi-interval accessor (look-ahead-safe)
+- [x] Refactored strategy interface (always 1m execution, multi-interval reads)
+- [x] Deterministic test strategy + engine validation
 - [ ] Decision context capture on entry/exit
 - [ ] Bar-level state recording
 - [ ] QuantStats metrics (replace hand-rolled `compute_metrics`)
 - [ ] Parameter optimisation (grid search)
 
+### FE — React SPA Frontend ✅
+- [x] Scaffold Vite + React 19 + TypeScript + TailwindCSS v4 + shadcn/ui
+- [x] Convert backend routes to pure JSON API (remove Jinja2)
+- [x] Hierarchical sidebar navigation (shadcn sidebar with collapsible groups)
+- [x] Data Browser page (tree + OHLCV chart + TanStack Table)
+- [x] Download page (Binance data downloader)
+- [x] Strategy page (spec, build, data preview with charts)
+- [x] Custom MonthRangePicker (calendar grid, warmup, per-interval availability)
+- [x] Server-side OHLCV resampling for large datasets (300k+ bars)
+- [x] Strategy preview charts (price + overlays + indicators + volume, synced)
+- [x] Dark mode with shadcn theming
+
 ### 3C — Visualisation
+- [x] Source data viewer (chart + table preview for strategy parquets)
 - [ ] Backtest viewer (price + indicators + equity + trade markers, synced charts)
-- [ ] Source data viewer
 - [ ] Trade inspector (click trade → see decision context)
 - [ ] QuantStats tearsheet embed
 - [ ] Optimisation results table
@@ -151,13 +165,14 @@ See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) f
 |-------|-------------|
 | 0 | ✅ Delete legacy files, update PLAN.md |
 | 1.1 | ✅ Standardize OHLCV schema |
-| 1.2 | ✅ Web app data browser + TradingView charts + HTMX 2.0 |
+| 1.2 | ✅ Web app data browser + TradingView charts |
 | 1.3 | ✅ Binance + Hyperliquid data pipelines |
 | 1.4 | ✅ Data validation |
 | 2.1-2.2 | ✅ Basis file schema + builder |
 | 2.3 | ✅ Web app basis builder UI |
 | 2.4 | ✅ BasisStrategy class |
-| 3A | Strategy data builder (multi-interval parquets + web UI) |
-| 3B | Backtest engine v2 (multi-interval, context capture, QuantStats) |
-| 3C | Visualisation (charts, trade inspector, tearsheets) |
+| 3A | ✅ Strategy data builder (multi-interval parquets + JSON API + React UI) |
+| FE | ✅ React SPA frontend (sidebar nav, charts, tables, MonthRangePicker, dark mode) |
+| 3B | Backtest engine v2 (context capture, bar recording, QuantStats) — partial |
+| 3C | Visualisation (backtest viewer, trade inspector, tearsheets) — partial |
 | 4.x | Performance dashboard (iterative) |

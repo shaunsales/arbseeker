@@ -1,73 +1,94 @@
-# React + TypeScript + Vite
+# Strategy Lab — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React SPA for the Basis Arbitrage Research Platform.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+| Layer | Choice |
+|-------|--------|
+| Framework | React 19 + Vite |
+| Language | TypeScript (strict) |
+| Styling | TailwindCSS v4 |
+| Components | shadcn/ui (sidebar, collapsible, tooltip, badge, button, etc.) |
+| API State | TanStack Query v5 |
+| Tables | TanStack Table v8 |
+| Charts | lightweight-charts v4 (TradingView) |
+| Routing | React Router v7 |
+| Icons | Lucide React |
 
-## React Compiler
+## Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev          # Dev server on http://localhost:5173
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The Vite dev server proxies `/api` requests to `http://localhost:8000` (the FastAPI backend). Run the backend first:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+```bash
+# From project root
+python run_app.py
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Type Checking
+
+```bash
+npx tsc --noEmit
+```
+
+## Build
+
+```bash
+npm run build        # Output to dist/
+```
+
+## Project Structure
+
+```
+src/
+├── api/                    # Typed API client
+│   ├── client.ts               # Base get/post wrappers
+│   ├── data.ts                 # Data endpoints
+│   └── strategy.ts             # Strategy endpoints
+├── components/
+│   ├── layout/
+│   │   └── AppLayout.tsx       # Sidebar nav (shadcn Sidebar + Collapsible)
+│   ├── data/
+│   │   ├── OhlcvChart.tsx      # Candlestick + volume chart
+│   │   ├── DataTable.tsx       # TanStack Table with sorting + pagination
+│   │   └── DataPreview.tsx     # Chart/table preview composite
+│   ├── strategy/
+│   │   ├── StrategyChart.tsx   # Multi-pane chart (price + overlays + indicators + volume)
+│   │   ├── MonthRangePicker.tsx # Calendar grid picker (warmup, availability)
+│   │   ├── BuildControls.tsx   # Date range + build button
+│   │   ├── StrategySpec.tsx    # Read-only data spec display
+│   │   ├── CurrentData.tsx     # Manifest info + file rows + preview
+│   │   └── DataPreview.tsx     # Strategy data chart/table preview
+│   └── ui/                     # shadcn/ui primitives (auto-generated)
+├── pages/
+│   ├── DataPage.tsx            # Data browser (tree + preview)
+│   ├── DownloadPage.tsx        # Binance data downloader
+│   ├── StrategyPage.tsx        # Strategy list + detail
+│   ├── BasisPage.tsx           # Basis file builder
+│   └── BacktestPage.tsx        # Backtest runner
+├── types/
+│   └── api.ts                  # TypeScript interfaces for API responses
+├── hooks/
+│   └── use-mobile.ts           # Responsive hook (shadcn)
+├── lib/
+│   └── utils.ts                # cn() utility
+├── App.tsx                     # Root routes + providers
+├── main.tsx                    # Entry point
+└── index.css                   # Tailwind + shadcn CSS variables
+
+## Routes
+
+| Path | Page | Description |
+|------|------|-------------|
+| `/data` | DataPage | Browse on-disk data, chart/table preview |
+| `/download` | DownloadPage | Download data from Binance |
+| `/strategies/single-asset` | StrategyPage | Single asset strategy builder |
+| `/strategies/basis` | BasisPage | Basis strategy builder |
+| `/strategies/multi-leg` | Placeholder | Multi-leg strategy (future) |
+| `/backtest` | BacktestPage | Run backtests (future) |
 ```

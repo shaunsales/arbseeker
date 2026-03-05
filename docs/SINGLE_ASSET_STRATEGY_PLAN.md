@@ -352,13 +352,17 @@ With known entry/exit prices we can hand-calculate exact expected PnL, costs, NA
 | 3B.1 | `StrategyData` multi-interval accessor | ✅ Done |
 | 3B.2 | Refactored strategy interface + engine loop | ✅ Done |
 | Test | Deterministic test strategy + engine validation | ✅ Done |
-| **FE** | **Migrate frontend to React SPA** | **← Next** |
-|  | → Scaffold Vite + React + TypeScript + TailwindCSS + shadcn/ui |  |
-|  | → Convert backend routes to pure JSON API (remove Jinja2) |  |
-|  | → Build React pages: Data, Basis, Strategy, Backtest |  |
-|  | → Reimplement strategy builder with React components |  |
-|  | → Chart components using lightweight-charts-react |  |
-| 3B.3 | Decision context capture | High |
+| **FE** | **Migrate frontend to React SPA** | **✅ Done** |
+|  | → Scaffold Vite + React + TypeScript + TailwindCSS + shadcn/ui | ✅ Done |
+|  | → Convert backend routes to pure JSON API (remove Jinja2) | ✅ Done |
+|  | → Build React pages: Data, Basis, Strategy, Backtest | ✅ Done |
+|  | → Reimplement strategy builder with React components | ✅ Done |
+|  | → Chart components using lightweight-charts | ✅ Done |
+|  | → Hierarchical sidebar navigation (shadcn sidebar) | ✅ Done |
+|  | → Custom MonthRangePicker (calendar grid, warmup, availability) | ✅ Done |
+|  | → Server-side OHLCV resampling for large datasets | ✅ Done |
+|  | → Standalone Download page (Binance) | ✅ Done |
+| 3B.3 | Decision context capture | **← Next** |
 | 3B.4 | Bar-level state recording | High |
 | 3B.5 | QuantStats metrics + output files | Medium |
 | 3B.6 | Parameter optimisation (grid search) | Deferred |

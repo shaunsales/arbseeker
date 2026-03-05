@@ -9,13 +9,14 @@ A modular Python platform for cross-venue basis arbitrage research, backtesting,
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          WEB APP LAYER                                    │
-│  FastAPI + HTMX 2.0 + Alpine.js                                         │
+│  React SPA (Vite + TypeScript + shadcn/ui) ←→ FastAPI JSON API           │
 ├─────────────────────────────────────────────────────────────────────────┤
+│  Sidebar Navigation                                                      │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
-│  │ Data Browser  │  │ Basis Builder│  │ Backtest     │                  │
-│  │ • Tree view   │  │ • Multi-venue│  │ • Run strats │                  │
-│  │ • Download    │  │ • Spread calc│  │ • View results│                 │
-│  │ • Preview     │  │ • Chart/save │  │              │                  │
+│  │ Data         │  │ Strategies   │  │ Backtest     │                  │
+│  │ • Browser    │  │ • Single     │  │ • Run strats │                  │
+│  │ • Download   │  │ • Basis      │  │ • View results│                 │
+│  │ • Chart/Table│  │ • Multi-Leg  │  │              │                  │
 │  └──────────────┘  └──────────────┘  └──────────────┘                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                           DATA LAYER                                     │
@@ -657,6 +658,8 @@ result.print_report()
 
 ## 8. File Reference
 
+### Backend (Python)
+
 | Module | Purpose |
 |--------|---------|
 | `core/data/storage.py` | Parquet I/O, `load_ohlcv()`, `save_ohlcv()`, `get_data_path()` |
@@ -670,10 +673,30 @@ result.print_report()
 | `core/indicators/indicators.py` | pandas-ta wrapper, `compute_indicators()` |
 | `core/strategy/base.py` | `SingleAssetStrategy`, `MultiLeggedStrategy`, `DataSpec`, `StrategyConfig` |
 | `core/strategy/basis_strategy.py` | `BasisStrategy`, `BasisPosition`, `BasisSignal` |
+| `core/strategy/data.py` | `StrategyDataSpec`, `StrategyDataBuilder`, `StrategyDataValidator`, manifest |
 | `core/strategy/position.py` | `Position`, `Trade`, `Signal`, `CostModel` |
 | `core/strategy/engine.py` | `BacktestEngine`, `BacktestResult` |
-| `app/main.py` | FastAPI web application entry point |
-| `app/routes/data.py` | Data browser, download, preview routes |
-| `app/routes/basis.py` | Basis file builder UI routes |
-| `app/routes/backtest.py` | Backtest runner UI routes |
-| `run_app.py` | Web app launcher |
+| `app/main.py` | FastAPI application entry point (JSON API only) |
+| `app/routes/data.py` | Data browser, download, preview endpoints (with OHLCV resampling) |
+| `app/routes/strategy.py` | Strategy spec, build, preview endpoints (with chart resampling) |
+| `app/routes/basis.py` | Basis file builder endpoints |
+| `app/routes/backtest.py` | Backtest runner endpoints |
+| `run_app.py` | Backend launcher |
+
+### Frontend (React)
+
+| Module | Purpose |
+|--------|---------|
+| `frontend/src/App.tsx` | Root component, routes, providers (TooltipProvider, QueryClient) |
+| `frontend/src/components/layout/AppLayout.tsx` | Sidebar navigation with collapsible groups |
+| `frontend/src/components/data/OhlcvChart.tsx` | Candlestick + volume chart (lightweight-charts) |
+| `frontend/src/components/data/DataTable.tsx` | TanStack Table with sorting + pagination |
+| `frontend/src/components/data/DataPreview.tsx` | Chart/table preview for data browser |
+| `frontend/src/components/strategy/StrategyChart.tsx` | Price + overlay + indicator + volume charts (synced) |
+| `frontend/src/components/strategy/MonthRangePicker.tsx` | Calendar month grid picker with warmup/availability |
+| `frontend/src/components/strategy/BuildControls.tsx` | Date range + build button for strategy data |
+| `frontend/src/pages/DataPage.tsx` | Data browser (tree + preview) |
+| `frontend/src/pages/DownloadPage.tsx` | Binance data downloader |
+| `frontend/src/pages/StrategyPage.tsx` | Strategy list + detail (spec, data, preview) |
+| `frontend/src/api/client.ts` | Typed fetch wrapper (`get`, `post`) |
+| `frontend/src/types/api.ts` | TypeScript interfaces for all API responses |
