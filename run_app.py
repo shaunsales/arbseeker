@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the Strategy Lab web application.
+Run the Antlyr web application.
 
 Usage:
     python run_app.py              # Run on port 8000
@@ -12,14 +12,14 @@ import uvicorn
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Strategy Lab web app")
+    parser = argparse.ArgumentParser(description="Run Antlyr web app")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     
     args = parser.parse_args()
     
-    print(f"\n🚀 Starting Strategy Lab at http://{args.host}:{args.port}\n")
+    print(f"\n🚀 Starting Antlyr at http://{args.host}:{args.port}\n")
     
     uvicorn.run(
         "app.main:app",

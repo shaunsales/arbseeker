@@ -1,5 +1,5 @@
 """
-Strategy Lab - Web Application
+Antlyr - Web Application
 
 FastAPI app for browsing data, running backtests, and visualizing results.
 
@@ -13,7 +13,7 @@ from app.routes import data, backtest, basis, strategy
 
 # App setup
 app = FastAPI(
-    title="Strategy Lab",
+    title="Antlyr",
     description="Trading strategy backtesting and data management",
     version="0.1.0",
 )

@@ -1,6 +1,6 @@
 # Platform Overview
 
-High-level architecture of Strategy Lab.
+High-level architecture of Antlyr.
 
 ---
 

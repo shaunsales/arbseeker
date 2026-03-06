@@ -1,6 +1,6 @@
-# Strategy Lab — Frontend
+# Antlyr — Frontend
 
-React SPA frontend for Strategy Lab.
+React SPA frontend for Antlyr.
 
 ## Stack
 

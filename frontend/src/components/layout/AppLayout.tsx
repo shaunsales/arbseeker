@@ -84,7 +84,7 @@ function AppSidebar() {
         <NavLink to="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
           <TrendingUp className="h-5 w-5 shrink-0 text-blue-400" />
           <span className="text-sm font-bold tracking-wide text-sidebar-foreground group-data-[collapsible=icon]:hidden">
-            Strategy Lab
+            Antlyr
           </span>
         </NavLink>
       </SidebarHeader>
