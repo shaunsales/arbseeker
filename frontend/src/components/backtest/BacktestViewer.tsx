@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEffect, useRef } from "react";
 import {
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   ColorType,
   LineSeries,
@@ -13,19 +14,64 @@ interface Props {
   data: BacktestViewData;
 }
 
-const METRIC_LABELS: Record<string, string> = {
-  total_return_pct: "Total Return",
-  sharpe_ratio: "Sharpe",
-  max_drawdown_pct: "Max Drawdown",
-  win_rate: "Win Rate",
-  total_trades: "Trades",
-  profit_factor: "Profit Factor",
-  avg_trade_pnl: "Avg Trade PnL",
-  avg_bars_held: "Avg Bars Held",
-};
+const METRIC_DISPLAY: {
+  key: string;
+  label: string;
+  fmt: (v: unknown) => string;
+  color?: (v: unknown) => string;
+}[] = [
+  {
+    key: "total_return_pct",
+    label: "Total Return",
+    fmt: (v) => `${(v as number) >= 0 ? "+" : ""}${(v as number).toFixed(2)}%`,
+    color: (v) => ((v as number) >= 0 ? "text-green-400" : "text-red-400"),
+  },
+  {
+    key: "sharpe_ratio",
+    label: "Sharpe Ratio",
+    fmt: (v) => (v as number).toFixed(2),
+  },
+  {
+    key: "max_drawdown_pct",
+    label: "Max Drawdown",
+    fmt: (v) => `-${(v as number).toFixed(2)}%`,
+    color: () => "text-red-400",
+  },
+  {
+    key: "win_rate",
+    label: "Win Rate",
+    fmt: (v) => `${(v as number).toFixed(1)}%`,
+  },
+  {
+    key: "total_trades",
+    label: "Trades",
+    fmt: (v) => String(Math.round(v as number)),
+  },
+  {
+    key: "profit_factor",
+    label: "Profit Factor",
+    fmt: (v) =>
+      v === "∞" ? "∞" : (v as number).toFixed(2),
+  },
+  {
+    key: "initial_capital",
+    label: "Initial Capital",
+    fmt: (v) => `$${(v as number).toLocaleString("en", { maximumFractionDigits: 0 })}`,
+  },
+  {
+    key: "final_capital",
+    label: "Final Capital",
+    fmt: (v) => `$${(v as number).toLocaleString("en", { maximumFractionDigits: 0 })}`,
+    color: () => "text-gray-200",
+  },
+];
 
 export default function BacktestViewer({ data }: Props) {
   const [tab, setTab] = useState<"charts" | "trades">("charts");
+  const metrics = (data.meta as Record<string, unknown>).metrics as
+    | Record<string, unknown>
+    | undefined;
+  const period = metrics?.period as string | undefined;
 
   return (
     <div className="space-y-4">
@@ -35,8 +81,13 @@ export default function BacktestViewer({ data }: Props) {
           <span className="text-blue-400">{data.strategy_name}</span>
         </h2>
         <Badge variant="secondary" className="text-[10px]">
-          {data.run_id.slice(0, 12)}
+          {data.run_id}
         </Badge>
+        {period && (
+          <span className="text-xs text-gray-500">
+            {period.split(" to ").map((d) => d.slice(0, 10)).join(" → ")}
+          </span>
+        )}
         {data.tearsheet_exists && (
           <a
             href={`/api/backtest/tearsheet/${data.strategy_name}/${data.run_id}`}
@@ -50,33 +101,26 @@ export default function BacktestViewer({ data }: Props) {
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-4 gap-3">
-        {Object.entries(data.meta).map(([key, val]) => {
-          const label = METRIC_LABELS[key] || key;
-          if (typeof val !== "number" && typeof val !== "string") return null;
-          const isReturn = key.includes("return");
-          const isDrawdown = key.includes("drawdown");
-          let color = "text-gray-200";
-          if (isReturn) color = (val as number) >= 0 ? "text-green-400" : "text-red-400";
-          if (isDrawdown) color = "text-red-400";
-
-          return (
-            <div
-              key={key}
-              className="rounded border border-gray-800 bg-gray-900 p-3"
-            >
-              <p className="text-xs text-gray-500">{label}</p>
-              <p className={`text-lg font-semibold ${color}`}>
-                {typeof val === "number"
-                  ? key.includes("pct") || key.includes("rate")
-                    ? `${val.toFixed(2)}%`
-                    : val.toFixed(2)
-                  : val}
-              </p>
-            </div>
-          );
-        })}
-      </div>
+      {metrics && (
+        <div className="grid grid-cols-4 gap-3">
+          {METRIC_DISPLAY.map(({ key, label, fmt, color }) => {
+            const val = metrics[key];
+            if (val == null) return null;
+            const textColor = color ? color(val) : "text-gray-200";
+            return (
+              <div
+                key={key}
+                className="rounded border border-gray-800 bg-gray-900 px-3 py-2"
+              >
+                <p className="text-[11px] text-gray-500">{label}</p>
+                <p className={`text-base font-semibold ${textColor}`}>
+                  {fmt(val)}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-gray-800">
@@ -181,6 +225,7 @@ function BacktestCharts({
 }: {
   chartData: BacktestViewData["chart_data"];
 }) {
+  const priceRef = useRef<HTMLDivElement>(null);
   const equityRef = useRef<HTMLDivElement>(null);
   const drawdownRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
@@ -203,11 +248,42 @@ function BacktestCharts({
       timeScale: { borderColor: "#374151", timeVisible: true },
     };
 
+    // Price chart with trade markers
+    if (priceRef.current && chartData.price?.length) {
+      const chart = createChart(priceRef.current, {
+        ...chartOptions,
+        height: 300,
+      });
+      chartsRef.current.push(chart);
+
+      const s = chart.addSeries(LineSeries, {
+        color: "#9ca3af",
+        lineWidth: 1,
+        title: "Price",
+      });
+      s.setData(chartData.price as never[]);
+
+      // Trade markers — shapes only (text would overlap with 100+ trades)
+      if (chartData.markers?.length) {
+        const sorted = [...chartData.markers]
+          .sort((a, b) => a.time - b.time)
+          .map((m) => ({
+            time: m.time as never,
+            position: m.position as never,
+            color: m.color,
+            shape: m.shape as never,
+            text: "",
+          }));
+        createSeriesMarkers(s, sorted);
+      }
+      chart.timeScale().fitContent();
+    }
+
     // Equity curve
-    if (equityRef.current && chartData.equity) {
+    if (equityRef.current && chartData.equity?.length) {
       const chart = createChart(equityRef.current, {
         ...chartOptions,
-        height: 250,
+        height: 200,
       });
       chartsRef.current.push(chart);
 
@@ -221,7 +297,7 @@ function BacktestCharts({
     }
 
     // Drawdown
-    if (drawdownRef.current && chartData.drawdown) {
+    if (drawdownRef.current && chartData.drawdown?.length) {
       const chart = createChart(drawdownRef.current, {
         ...chartOptions,
         height: 120,
@@ -237,15 +313,17 @@ function BacktestCharts({
       chart.timeScale().fitContent();
     }
 
-    // Sync
-    if (chartsRef.current.length === 2) {
-      const [eq, dd] = chartsRef.current;
-      eq.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) dd.timeScale().setVisibleLogicalRange(range);
-      });
-      dd.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) eq.timeScale().setVisibleLogicalRange(range);
-      });
+    // Sync all chart time scales
+    const charts = chartsRef.current;
+    for (let i = 0; i < charts.length; i++) {
+      for (let j = 0; j < charts.length; j++) {
+        if (i === j) continue;
+        const src = charts[i];
+        const dst = charts[j];
+        src.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (range) dst.timeScale().setVisibleLogicalRange(range);
+        });
+      }
     }
 
     return () => {
@@ -256,7 +334,11 @@ function BacktestCharts({
 
   return (
     <div className="space-y-1">
+      <p className="text-[11px] font-medium text-gray-500">Price + Trades</p>
+      <div ref={priceRef} className="rounded bg-gray-900" />
+      <p className="mt-2 text-[11px] font-medium text-gray-500">Equity Curve</p>
       <div ref={equityRef} className="rounded bg-gray-900" />
+      <p className="mt-2 text-[11px] font-medium text-gray-500">Drawdown</p>
       <div ref={drawdownRef} className="rounded bg-gray-900" />
     </div>
   );
