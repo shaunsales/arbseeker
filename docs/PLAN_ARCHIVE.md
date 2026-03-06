@@ -121,14 +121,14 @@ See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) f
 - [x] Backend API — strategy endpoints (JSON)
 - [x] Web UI — React strategy data builder page
 
-### 3B — Backtest Engine v2 (partial)
+### 3B — Backtest Engine v2 ✅
 - [x] `StrategyData` multi-interval accessor (look-ahead-safe)
 - [x] Refactored strategy interface (always 1m execution, multi-interval reads)
 - [x] Deterministic test strategy + engine validation
-- [ ] Decision context capture on entry/exit
-- [ ] Bar-level state recording
-- [ ] QuantStats metrics (replace hand-rolled `compute_metrics`)
-- [ ] Parameter optimisation (grid search)
+- [x] Decision context capture (`data.snapshot()` on entry/exit, stored in trade metadata)
+- [x] Bar-level state recording (nav, drawdown, balance, position state per 1m bar → `{run_id}_bars.parquet`)
+- [x] QuantStats metrics + HTML tearsheet + bars/trades parquet + meta JSON output
+- [ ] Parameter optimisation (grid search) — Deferred
 
 ### FE — React SPA Frontend ✅
 - [x] Scaffold Vite + React 19 + TypeScript + TailwindCSS v4 + shadcn/ui
@@ -142,12 +142,20 @@ See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) f
 - [x] Strategy preview charts (price + overlays + indicators + volume, synced)
 - [x] Dark mode with shadcn theming
 
-### 3C — Visualisation
+### BT — Backtest API + Viewer Scaffolding ✅
+- [x] Backend API: list runs, view run (equity/drawdown/price charts + trade markers), run backtest, serve tearsheet
+- [x] Frontend: BacktestPage (run list sidebar), BacktestViewer (metrics grid, equity + drawdown charts, trades table)
+- [x] Typed API client (`listBacktests`, `viewBacktest`, `runBacktest`)
+- [x] QuantStats tearsheet link (open in new tab)
+
+### 3C — Visualisation (in progress)
 - [x] Source data viewer (chart + table preview for strategy parquets)
-- [ ] Backtest viewer (price + indicators + equity + trade markers, synced charts)
-- [ ] Trade inspector (click trade → see decision context)
-- [ ] QuantStats tearsheet embed
-- [ ] Optimisation results table
+- [x] Backtest viewer scaffolding (equity curve, drawdown chart, trades table)
+- [ ] Price chart with trade entry/exit markers in backtest viewer
+- [ ] Run Backtest UI (select strategy, set capital/costs, run, navigate to results)
+- [ ] Metrics display fix (read from `meta.metrics`)
+- [ ] Trade inspector (click trade → decision context panel)
+- [ ] Optimisation results table — Deferred
 
 ---
 
@@ -173,6 +181,7 @@ See [`docs/SINGLE_ASSET_STRATEGY_PLAN.md`](docs/SINGLE_ASSET_STRATEGY_PLAN.md) f
 | 2.4 | ✅ BasisStrategy class |
 | 3A | ✅ Strategy data builder (multi-interval parquets + JSON API + React UI) |
 | FE | ✅ React SPA frontend (sidebar nav, charts, tables, MonthRangePicker, dark mode) |
-| 3B | Backtest engine v2 (context capture, bar recording, QuantStats) — partial |
-| 3C | Visualisation (backtest viewer, trade inspector, tearsheets) — partial |
+| 3B | ✅ Backtest engine v2 (context capture, bar recording, QuantStats, tearsheets) |
+| BT | ✅ Backtest API + viewer scaffolding (list/view/run endpoints, equity/drawdown charts, trades table) |
+| 3C | Visualisation (price chart + markers, run UI, trade inspector) — in progress |
 | 4.x | Performance dashboard (iterative) |

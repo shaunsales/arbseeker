@@ -362,11 +362,17 @@ With known entry/exit prices we can hand-calculate exact expected PnL, costs, NA
 |  | → Custom MonthRangePicker (calendar grid, warmup, availability) | ✅ Done |
 |  | → Server-side OHLCV resampling for large datasets | ✅ Done |
 |  | → Standalone Download page (Binance) | ✅ Done |
-| 3B.3 | Decision context capture | **← Next** |
-| 3B.4 | Bar-level state recording | High |
-| 3B.5 | QuantStats metrics + output files | Medium |
+| 3B.3 | Decision context capture (`data.snapshot()` on entry/exit) | ✅ Done |
+| 3B.4 | Bar-level state recording (nav, drawdown, position state per 1m bar) | ✅ Done |
+| 3B.5 | QuantStats metrics + output files (tearsheet HTML, bars/trades parquet, meta JSON) | ✅ Done |
 | 3B.6 | Parameter optimisation (grid search) | Deferred |
-| 3C.1 | Backtest viewer (React — charts + trades) | Medium |
-| 3C.3 | Trade inspector (click to see context) | Low |
-| 3C.4 | QuantStats tearsheet embed | Low |
+| **BT** | **Backtest API + viewer scaffolding** | **✅ Done** |
+|  | → Backend: list runs, view run (charts + trades + markers), run backtest, serve tearsheet | ✅ Done |
+|  | → Frontend: BacktestPage (run list sidebar), BacktestViewer (metrics, equity/drawdown charts, trades table) | ✅ Done |
+|  | → API client: typed `listBacktests`, `viewBacktest`, `runBacktest` | ✅ Done |
+| 3C.1a | Price chart with trade entry/exit markers in backtest viewer | **← Next** |
+| 3C.1b | Run Backtest UI (select strategy, set capital/costs, run, navigate to results) | High |
+| 3C.1c | Metrics display fix (read from `meta.metrics` not raw meta) | High |
+| 3C.3 | Trade inspector (click trade → decision context panel) | Medium |
+| 3C.4 | QuantStats tearsheet embed / link | Low |
 | 3C.5 | Optimisation results table | Deferred |
