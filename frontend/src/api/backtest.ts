@@ -38,6 +38,11 @@ export interface BacktestViewData {
       exit_context?: Record<string, Record<string, unknown> | null>;
     } | null;
   }[];
+  indicators: {
+    name: string;
+    interval: string;
+    series: { time: number; value: number }[];
+  }[];
   tearsheet_exists: boolean;
   error?: string;
 }

@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   createChart,
   createSeriesMarkers,
   type IChartApi,
   ColorType,
   LineSeries,
+  AreaSeries,
 } from "lightweight-charts";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
@@ -139,7 +140,7 @@ export default function BacktestViewer({ data }: Props) {
         ))}
       </div>
 
-      {tab === "charts" && <BacktestCharts chartData={data.chart_data} />}
+      {tab === "charts" && <BacktestCharts chartData={data.chart_data} indicators={data.indicators ?? []} />}
 
       {tab === "trades" && <TradesTable trades={data.trades} />}
     </div>
@@ -148,15 +149,37 @@ export default function BacktestViewer({ data }: Props) {
 
 // ── Backtest Charts sub-component ──
 
+type IndicatorSeries = BacktestViewData["indicators"][number];
+
+const IND_COLORS = ["#38bdf8", "#fb923c", "#a78bfa", "#4ade80", "#f472b6"];
+
 function BacktestCharts({
   chartData,
+  indicators,
 }: {
   chartData: BacktestViewData["chart_data"];
+  indicators: IndicatorSeries[];
 }) {
   const priceRef = useRef<HTMLDivElement>(null);
   const equityRef = useRef<HTMLDivElement>(null);
-  const drawdownRef = useRef<HTMLDivElement>(null);
+  const indRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const chartsRef = useRef<IChartApi[]>([]);
+
+  // Group related indicators into panels (ADX+DMP+DMN, MACD+MACDh+MACDs, etc.)
+  const indGroups = useMemo(() => {
+    const groups = new Map<string, IndicatorSeries[]>();
+    for (const ind of indicators) {
+      if (!ind.series.length) continue;
+      const baseName = ind.name.replace(/_\d+$/, "");
+      const groupKey =
+        ["ADX", "DMP", "DMN"].includes(baseName) ? `${ind.interval}_ADX` :
+        ["MACD", "MACDh", "MACDs"].includes(baseName) ? `${ind.interval}_MACD` :
+        `${ind.interval}_${ind.name}`;
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey)!.push(ind);
+    }
+    return Array.from(groups.entries());
+  }, [indicators]);
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -173,7 +196,7 @@ function BacktestCharts({
       },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: "#374151" },
-      timeScale: { borderColor: "#374151", timeVisible: true },
+      timeScale: { borderColor: "#374151", timeVisible: true, minBarSpacing: 0.001 },
     };
 
     // Price chart with trade markers
@@ -184,14 +207,13 @@ function BacktestCharts({
       });
       chartsRef.current.push(chart);
 
-      const s = chart.addSeries(LineSeries, {
+      const priceSeries = chart.addSeries(LineSeries, {
         color: "#9ca3af",
         lineWidth: 1,
         title: "Price",
       });
-      s.setData(chartData.price as never[]);
+      priceSeries.setData(chartData.price as never[]);
 
-      // Trade markers — shapes only (text would overlap with 100+ trades)
       if (chartData.markers?.length) {
         const sorted = [...chartData.markers]
           .sort((a, b) => a.time - b.time)
@@ -202,72 +224,112 @@ function BacktestCharts({
             shape: m.shape as never,
             text: "",
           }));
-        createSeriesMarkers(s, sorted);
+        createSeriesMarkers(priceSeries, sorted);
       }
       chart.timeScale().fitContent();
     }
 
-    // Equity curve
+    // Indicator panels — each group gets its own chart
+    indGroups.forEach(([groupKey, group]: [string, IndicatorSeries[]]) => {
+      const el = indRefs.current.get(groupKey);
+      if (!el) return;
+
+      const chart = createChart(el, {
+        ...chartOptions,
+        height: 150,
+      });
+      chartsRef.current.push(chart);
+
+      group.forEach((ind: IndicatorSeries, idx: number) => {
+        const s = chart.addSeries(LineSeries, {
+          color: IND_COLORS[idx % IND_COLORS.length],
+          lineWidth: 1,
+          title: ind.name,
+        });
+        s.setData(ind.series as never[]);
+      });
+      chart.timeScale().fitContent();
+    });
+
+    // Equity + Drawdown on a single chart with dual Y-axes
     if (equityRef.current && chartData.equity?.length) {
       const chart = createChart(equityRef.current, {
         ...chartOptions,
         height: 200,
+        rightPriceScale: { borderColor: "#374151" },
+        leftPriceScale: { borderColor: "#374151", visible: true },
       });
       chartsRef.current.push(chart);
 
-      const s = chart.addSeries(LineSeries, {
+      const eqSeries = chart.addSeries(LineSeries, {
         color: "#3b82f6",
         lineWidth: 2,
         title: "Equity",
+        priceScaleId: "right",
       });
-      s.setData(chartData.equity as never[]);
-      chart.timeScale().fitContent();
-    }
+      eqSeries.setData(chartData.equity as never[]);
 
-    // Drawdown
-    if (drawdownRef.current && chartData.drawdown?.length) {
-      const chart = createChart(drawdownRef.current, {
-        ...chartOptions,
-        height: 120,
-      });
-      chartsRef.current.push(chart);
-
-      const s = chart.addSeries(LineSeries, {
-        color: "#ef4444",
-        lineWidth: 1,
-        title: "Drawdown %",
-      });
-      s.setData(chartData.drawdown as never[]);
-      chart.timeScale().fitContent();
-    }
-
-    // Sync all chart time scales
-    const charts = chartsRef.current;
-    for (let i = 0; i < charts.length; i++) {
-      for (let j = 0; j < charts.length; j++) {
-        if (i === j) continue;
-        const src = charts[i];
-        const dst = charts[j];
-        src.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-          if (range) dst.timeScale().setVisibleLogicalRange(range);
+      if (chartData.drawdown?.length) {
+        const ddSeries = chart.addSeries(AreaSeries, {
+          lineColor: "#ef4444",
+          lineWidth: 1,
+          topColor: "rgba(239, 68, 68, 0.0)",
+          bottomColor: "rgba(239, 68, 68, 0.3)",
+          title: "Drawdown %",
+          priceScaleId: "left",
         });
+        ddSeries.setData(chartData.drawdown as never[]);
       }
+      chart.timeScale().fitContent();
     }
+
+    // Sync: all series now share the same timestamps (LOCF-aligned),
+    // so simple logical-range sync with source-locking works cleanly.
+    const charts = chartsRef.current;
+    let syncSource: number | null = null;
+
+    const releaseSyncSource = () => { syncSource = null; };
+    window.addEventListener("mouseup", releaseSyncSource);
+    window.addEventListener("touchend", releaseSyncSource);
+
+    charts.forEach((chart, i) => {
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (!range) return;
+        if (syncSource !== null && syncSource !== i) return;
+        syncSource = i;
+        charts.forEach((other, j) => {
+          if (i !== j) other.timeScale().setVisibleLogicalRange(range);
+        });
+      });
+    });
 
     return () => {
+      window.removeEventListener("mouseup", releaseSyncSource);
+      window.removeEventListener("touchend", releaseSyncSource);
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData]);
+  }, [chartData, indGroups]);
 
   return (
     <div className="space-y-1">
       <p className="text-[11px] font-medium text-gray-500">Price + Trades</p>
       <div ref={priceRef} className="rounded bg-gray-900" />
-      <p className="mt-2 text-[11px] font-medium text-gray-500">Equity Curve</p>
+
+      {indGroups.map(([groupKey, group]: [string, IndicatorSeries[]]) => (
+        <div key={groupKey}>
+          <p className="mt-2 text-[11px] font-medium text-gray-500">
+            {group.map((i: IndicatorSeries) => i.name).join(" / ")} ({group[0].interval})
+          </p>
+          <div
+            ref={(el) => { if (el) indRefs.current.set(groupKey, el); }}
+            className="rounded bg-gray-900"
+          />
+        </div>
+      ))}
+
+      <p className="mt-2 text-[11px] font-medium text-gray-500">Equity / Drawdown</p>
       <div ref={equityRef} className="rounded bg-gray-900" />
-      <p className="mt-2 text-[11px] font-medium text-gray-500">Drawdown</p>
-      <div ref={drawdownRef} className="rounded bg-gray-900" />
     </div>
   );
 }

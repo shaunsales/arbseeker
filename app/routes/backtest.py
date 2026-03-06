@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.routes.strategy import discover_strategies, _get_strategy_instance
-from core.strategy.data import strategy_folder, STRATEGIES_OUTPUT_DIR
+from core.strategy.data import strategy_folder, STRATEGIES_OUTPUT_DIR, _indicator_column_names
 from core.strategy.engine import BacktestEngine
 from core.strategy.position import CostModel, DEFAULT_COSTS
 
@@ -55,21 +55,64 @@ def _list_runs() -> list[dict]:
     return runs
 
 
-def _downsample_series(timestamps, values, max_points=2000):
-    """Downsample a time series for chart display."""
-    if len(timestamps) <= max_points:
-        return [
-            {"time": int(t.timestamp()) if hasattr(t, "timestamp") else int(pd.Timestamp(t).timestamp()), "value": round(float(v), 4)}
-            for t, v in zip(timestamps, values)
-            if not (isinstance(v, float) and np.isnan(v))
-        ]
+RESAMPLE_CANDIDATES = ["1min", "5min", "15min", "1h"]
+MAX_CHART_BARS = 20_000
 
-    step = max(1, len(timestamps) // max_points)
-    return [
-        {"time": int(timestamps[i].timestamp()) if hasattr(timestamps[i], "timestamp") else int(pd.Timestamp(timestamps[i]).timestamp()), "value": round(float(values[i]), 4)}
-        for i in range(0, len(timestamps), step)
-        if not (isinstance(values[i], float) and np.isnan(values[i]))
-    ]
+OHLCV_COLS = {"open", "high", "low", "close", "volume", "quote_volume",
+              "count", "taker_buy_volume", "taker_buy_quote_volume", "market_open"}
+
+
+def _pick_resample_interval(n_bars_1m: int) -> str:
+    """Pick the smallest resample interval that keeps bars under MAX_CHART_BARS.
+
+    n_bars_1m is the number of 1-minute bars in the dataset.
+    """
+    for interval in RESAMPLE_CANDIDATES:
+        divisor = pd.Timedelta(interval).total_seconds() / 60
+        estimated = n_bars_1m / max(divisor, 1)
+        if estimated <= MAX_CHART_BARS:
+            return interval
+    return "1h"
+
+
+def _resample_bars(df: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """Resample 1m OHLCV bars to a coarser interval."""
+    if interval == "1min":
+        return df
+    agg = {}
+    if "close" in df.columns:
+        agg["close"] = "last"
+    if "open" in df.columns:
+        agg["open"] = "first"
+    if "high" in df.columns:
+        agg["high"] = "max"
+    if "low" in df.columns:
+        agg["low"] = "min"
+    if "volume" in df.columns:
+        agg["volume"] = "sum"
+    # nav / drawdown from bar-level results
+    if "nav" in df.columns:
+        agg["nav"] = "last"
+    if "drawdown_pct" in df.columns:
+        agg["drawdown_pct"] = "min"
+    return df.resample(interval).agg(agg).dropna(subset=["close"])
+
+
+def _series_to_json(timestamps, values) -> list[dict]:
+    """Convert aligned timestamps + values to [{time, value}] for lightweight-charts."""
+    out = []
+    for t, v in zip(timestamps, values):
+        if isinstance(v, float) and np.isnan(v):
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv):
+            continue
+        epoch = int(t.timestamp()) if hasattr(t, "timestamp") else int(pd.Timestamp(t).timestamp())
+        out.append({"time": epoch, "value": round(fv, 4)})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -96,23 +139,34 @@ async def view_run(strategy_name: str, run_id: str):
     with open(meta_path) as f:
         meta = json.load(f)
 
-    # Load bar-level data for charts
+    # ------------------------------------------------------------------
+    # Load bar-level data and resample to a sensible chart interval
+    # ------------------------------------------------------------------
     bars_path = results_dir / f"{run_id}_bars.parquet"
-    chart_data = {}
+    chart_data: dict = {}
+    resampled_index: pd.DatetimeIndex | None = None
+
     if bars_path.exists():
         bars_df = pd.read_parquet(bars_path)
-        ts = bars_df.index
-        chart_data["price"] = _downsample_series(ts, bars_df["close"])
-        chart_data["equity"] = _downsample_series(ts, bars_df["nav"])
-        chart_data["drawdown"] = _downsample_series(ts, bars_df["drawdown_pct"])
+        interval = _pick_resample_interval(len(bars_df))
+        bars_r = _resample_bars(bars_df, interval)
+        resampled_index = bars_r.index
 
+        chart_data["interval"] = interval
+        chart_data["price"] = _series_to_json(bars_r.index, bars_r["close"])
+        if "nav" in bars_r.columns:
+            chart_data["equity"] = _series_to_json(bars_r.index, bars_r["nav"])
+        if "drawdown_pct" in bars_r.columns:
+            chart_data["drawdown"] = _series_to_json(bars_r.index, bars_r["drawdown_pct"])
+
+    # ------------------------------------------------------------------
     # Load trades
+    # ------------------------------------------------------------------
     trades = []
     trades_path = results_dir / f"{run_id}_trades.parquet"
     if trades_path.exists():
         trades_df = pd.read_parquet(trades_path)
         for _, row in trades_df.iterrows():
-            # Parse metadata (decision context) if available
             raw_meta = row.get("metadata", None)
             trade_metadata = None
             if raw_meta is not None:
@@ -161,7 +215,50 @@ async def view_run(strategy_name: str, run_id: str):
                 "text": f"X {row.get('exit_reason', '')}",
             })
 
-    # Tearsheet link
+    # ------------------------------------------------------------------
+    # Load indicator data, LOCF-resample onto the same chart index
+    # ------------------------------------------------------------------
+    indicators: list[dict] = []
+    data_dir = strategy_folder(strategy_name) / "data"
+    manifest_path = strategy_folder(strategy_name) / "manifest.json"
+
+    if manifest_path.exists() and data_dir.exists() and resampled_index is not None:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        spec_intervals = manifest.get("spec", {}).get("intervals", {})
+
+        for src_interval, ind_list in spec_intervals.items():
+            if not ind_list:
+                continue
+            parquet_path = data_dir / f"{src_interval}.parquet"
+            if not parquet_path.exists():
+                continue
+            ind_df = pd.read_parquet(parquet_path)
+
+            # Build whitelist: only the PRIMARY column per indicator.
+            # e.g. ("adx", {"length":14}) → "ADX_14" only (skip DMP/DMN)
+            # ("sma", {"length":50}) → "SMA_50"
+            wanted_cols: set[str] = set()
+            for ind_name, params in ind_list:
+                all_cols = _indicator_column_names(ind_name, params)
+                if all_cols:
+                    wanted_cols.add(all_cols[0])
+
+            ind_cols = [c for c in ind_df.columns if c in wanted_cols]
+            if not ind_cols:
+                continue
+
+            # Reindex indicator data onto the chart's resampled timestamps (LOCF)
+            ind_aligned = ind_df[ind_cols].reindex(resampled_index, method="ffill")
+
+            for col in ind_cols:
+                indicators.append({
+                    "name": col,
+                    "interval": src_interval,
+                    "series": _series_to_json(ind_aligned.index, ind_aligned[col]),
+                })
+
+    # ------------------------------------------------------------------
     tearsheet_exists = (results_dir / f"{run_id}_tearsheet.html").exists()
 
     return {
@@ -170,6 +267,7 @@ async def view_run(strategy_name: str, run_id: str):
         "meta": meta,
         "chart_data": chart_data,
         "trades": trades,
+        "indicators": indicators,
         "tearsheet_exists": tearsheet_exists,
     }
 
