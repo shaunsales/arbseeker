@@ -93,16 +93,15 @@ function renderOverlayIndicator(
     }
 
     case "markers": {
-      // PSAR-style: render as a thin line with small point markers (not heavy chart markers)
+      // PSAR-style: dotted line tracing above/below candles
       const markerColor = render.color ?? "#f59e0b";
       for (const col of ind.columns) {
         const data = ind.series[col];
         if (!data?.length) continue;
         const s = chart.addSeries(LineSeries, {
           color: markerColor,
-          lineVisible: false,
-          pointMarkersVisible: true,
-          pointMarkersRadius: render.size ?? 3,
+          lineWidth: 2,
+          lineStyle: 3, // Dotted
           crosshairMarkerVisible: false,
           lastValueVisible: false,
           priceLineVisible: false,
