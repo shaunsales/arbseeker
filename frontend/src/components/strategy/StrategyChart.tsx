@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import {
   createChart,
-  createSeriesMarkers,
   type IChartApi,
-  type ISeriesApi,
   type LineWidth,
   ColorType,
   CandlestickSeries,
@@ -78,7 +76,6 @@ function addLevelLines(chart: IChartApi, levels: number[], paneIndex?: number, c
 
 function renderOverlayIndicator(
   chart: IChartApi,
-  candleSeries: ISeriesApi<"Candlestick">,
   ind: IndicatorResult,
   colorIdx: number,
 ) {
@@ -96,30 +93,23 @@ function renderOverlayIndicator(
     }
 
     case "markers": {
-      // PSAR-style dots above/below candles
-      const closeMap = new Map<number, number>();
-      if (ind.series._close) {
-        for (const pt of ind.series._close) closeMap.set(pt.time, pt.value);
-      }
+      // PSAR-style: render as a thin line with small point markers (not heavy chart markers)
       const markerColor = render.color ?? "#f59e0b";
-      const markers: { time: number; position: string; color: string; shape: string; size: number }[] = [];
       for (const col of ind.columns) {
         const data = ind.series[col];
-        if (!data) continue;
-        for (const pt of data) {
-          const close = closeMap.get(pt.time);
-          const above = close !== undefined && pt.value > close;
-          markers.push({
-            time: pt.time,
-            position: above ? "aboveBar" : "belowBar",
-            color: markerColor,
-            shape: "circle",
-            size: render.size ?? 0.5,
-          });
-        }
+        if (!data?.length) continue;
+        const s = chart.addSeries(LineSeries, {
+          color: markerColor,
+          lineVisible: false,
+          pointMarkersVisible: true,
+          pointMarkersRadius: render.size ?? 1.5,
+          crosshairMarkerVisible: false,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          title: col,
+        });
+        s.setData(data as never[]);
       }
-      markers.sort((a, b) => a.time - b.time);
-      createSeriesMarkers(candleSeries, markers as never[]);
       break;
     }
 
@@ -377,7 +367,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
     let oi = 0;
     for (const ind of adHocOverlayResults) {
       if (!hiddenSet.has(`adhoc:${ind.name}`)) {
-        renderOverlayIndicator(chart, candleSeries, ind, oi);
+        renderOverlayIndicator(chart, ind, oi);
       }
       oi++;
     }
