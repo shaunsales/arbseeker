@@ -81,6 +81,52 @@ class CoinRoutesClient:
         """List available currency pairs."""
         return self._get("/api/currency_pairs/", limit=limit)
 
+    def search_currency_pairs(self, slug: str):
+        """Search currency pairs by slug with exchange availability (v2 API).
+
+        Returns a list of pairs matching the slug, each with
+        currency_pair_to_exchanges showing which exchanges support it.
+        """
+        resp = self._get("/api/currency_pairs_v2/", slug=slug, limit=50)
+        return resp.get("results", []) if isinstance(resp, dict) else resp
+
+    def get_all_pairs_simple(self) -> list[dict]:
+        """Fetch all pairs from the v2 simple endpoint (paginated).
+
+        Returns a flat list of {slug, product_type, exchanges[]}.
+        """
+        results = []
+        page = 1
+        while True:
+            resp = self._get("/api/currency_pairs_v2/simple/", limit=250, page=page)
+            results.extend(resp.get("results", []))
+            if not resp.get("next"):
+                break
+            page += 1
+        return results
+
+    def cost_calculator(self, symbol: str, side: str = "both",
+                        target_quantity: float | None = None,
+                        markets: str | None = None,
+                        depth_limit: int | None = None):
+        """Query real-time liquidity via the MERX Cost Calculator.
+
+        Args:
+            symbol: e.g. "BTC-USDT"
+            side: "buy", "sell", or "both"
+            target_quantity: quantity to trade
+            markets: semicolon-separated list, e.g. "BINANCE;COINBASE"
+            depth_limit: max order book depth to consider
+        """
+        params: dict = {"side": side}
+        if target_quantity is not None:
+            params["target_quantity"] = target_quantity
+        if markets is not None:
+            params["markets"] = markets
+        if depth_limit is not None:
+            params["depth_limit"] = depth_limit
+        return self._get(f"/api/cost_calculator/{symbol}", **params)
+
     def get_balances(self):
         """Get account currency balances."""
         return self._get("/api/currency_balances/")
