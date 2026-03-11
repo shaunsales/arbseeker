@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -244,6 +244,14 @@ function renderPanelIndicator(
   }
 }
 
+// ── Legend item type ──
+
+interface LegendItem {
+  key: string;
+  label: string;
+  color: string;
+}
+
 // ── Chart component ──
 
 export default function StrategyChart({ chartData, separateCols, adHocData }: Props) {
@@ -252,13 +260,60 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
   const volumeRef = useRef<HTMLDivElement>(null);
   const adHocPanelsRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
+  const [hidden, setHidden] = useState<string[]>([]);
 
+  const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+
+  const toggleVisibility = (key: string) => {
+    setHidden((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
+
+  // Build legend items from all sources
+  const legendItems = useMemo(() => {
+    const items: LegendItem[] = [];
+
+    // Built-data overlays (e.g. SMA_50)
+    let ci = 0;
+    for (const col of Object.keys(chartData?.overlays || {})) {
+      items.push({ key: `built:${col}`, label: col, color: COLORS[ci % COLORS.length] });
+      ci++;
+    }
+
+    // Built-data separate indicators (e.g. ADX_14, DMP_14, DMN_14)
+    ci = 0;
+    for (const col of Object.keys(chartData?.indicators || {})) {
+      items.push({ key: `built:${col}`, label: col, color: COLORS[ci % COLORS.length] });
+      ci++;
+    }
+
+    // Ad-hoc indicators
+    if (adHocData?.results) {
+      let oi = 0;
+      for (const ind of adHocData.results) {
+        if (ind.error) continue;
+        const color = ind.display === "overlay"
+          ? ADHOC_COLORS[oi % ADHOC_COLORS.length]
+          : ADHOC_COLORS[oi % ADHOC_COLORS.length];
+        items.push({ key: `adhoc:${ind.name}`, label: ind.label, color });
+        oi++;
+      }
+    }
+
+    return items;
+  }, [chartData, adHocData]);
+
+  const adHocOverlayResults = adHocData?.results.filter((r) => r.display === "overlay" && !r.error) ?? [];
   const adHocPanelResults = adHocData?.results.filter((r) => r.display === "panel" && !r.error) ?? [];
+
+  const visibleSeparateCount = Object.keys(chartData?.indicators || {}).filter(
+    (col) => !hiddenSet.has(`built:${col}`)
+  ).length;
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
     chartsRef.current = [];
-    // Clear dynamically created panel divs
     if (adHocPanelsRef.current) adHocPanelsRef.current.innerHTML = "";
 
     if (!chartData?.ohlcv?.length) return;
@@ -296,19 +351,22 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       });
       candleSeries.setData(chartData.ohlcv as never[]);
 
-      // Strategy overlays (from built data)
+      // Strategy overlays (from built data) — filtered by visibility
       let ci = 0;
       for (const [name, data] of Object.entries(chartData.overlays || {})) {
-        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+        if (!hiddenSet.has(`built:${name}`)) {
+          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+        }
         ci++;
       }
 
-      // Ad-hoc overlay indicators (render-spec aware)
+      // Ad-hoc overlay indicators (render-spec aware) — filtered by visibility
       if (adHocData?.results) {
         let oi = 0;
-        for (const ind of adHocData.results) {
-          if (ind.display !== "overlay" || ind.error) continue;
-          renderOverlayIndicator(chart, candleSeries, ind, oi);
+        for (const ind of adHocOverlayResults) {
+          if (!hiddenSet.has(`adhoc:${ind.name}`)) {
+            renderOverlayIndicator(chart, candleSeries, ind, oi);
+          }
           oi++;
         }
       }
@@ -316,27 +374,35 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       chart.timeScale().fitContent();
     }
 
-    // ── Strategy indicator chart (from built data) ──
-    if (indicatorRef.current && separateCols.length > 0) {
+    // ── Strategy indicator chart (from built data) — filtered by visibility ──
+    const visibleSeparateCols = Object.entries(chartData?.indicators || {}).filter(
+      ([col]) => !hiddenSet.has(`built:${col}`)
+    );
+    if (indicatorRef.current && visibleSeparateCols.length > 0) {
       const chart = createChart(indicatorRef.current, {
         ...chartOptions,
         height: 150,
       });
       chartsRef.current.push(chart);
 
+      // Maintain original color index so colors stay stable
       let ci = 0;
       for (const [name, data] of Object.entries(chartData.indicators || {})) {
-        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+        if (!hiddenSet.has(`built:${name}`)) {
+          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+        }
         ci++;
       }
 
       chart.timeScale().fitContent();
     }
 
-    // ── Ad-hoc panel indicators (one chart per indicator) ──
-    if (adHocPanelsRef.current && adHocPanelResults.length > 0) {
+    // ── Ad-hoc panel indicators (one chart per indicator) — filtered by visibility ──
+    if (adHocPanelsRef.current) {
       let panelIdx = 0;
       for (const ind of adHocPanelResults) {
+        if (hiddenSet.has(`adhoc:${ind.name}`)) { panelIdx++; continue; }
+
         const div = document.createElement("div");
         div.className = "rounded bg-gray-900";
         div.style.marginTop = "4px";
@@ -398,12 +464,39 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, separateCols, adHocData, adHocPanelResults.length]);
+  }, [chartData, separateCols, adHocData, adHocOverlayResults.length, adHocPanelResults.length, hidden]);
 
   return (
     <div className="space-y-1">
+      {/* Legend / visibility toggles */}
+      {legendItems.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1 py-1.5">
+          {legendItems.map((item) => {
+            const isHidden = hiddenSet.has(item.key);
+            return (
+              <button
+                key={item.key}
+                onClick={() => toggleVisibility(item.key)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+                  isHidden
+                    ? "bg-gray-800/40 text-gray-600 line-through"
+                    : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                }`}
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{
+                    backgroundColor: isHidden ? "#4b5563" : item.color,
+                  }}
+                />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div ref={priceRef} className="rounded bg-gray-900" />
-      {separateCols.length > 0 && (
+      {visibleSeparateCount > 0 && (
         <div ref={indicatorRef} className="rounded bg-gray-900" />
       )}
       <div ref={adHocPanelsRef} />

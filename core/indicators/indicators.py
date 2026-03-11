@@ -85,11 +85,13 @@ INDICATOR_REGISTRY: dict[str, dict[str, Any]] = {
                  ]},
                  "params": {"fast": {"default": 12, "type": "int", "min": 2, "max": 100}, "slow": {"default": 26, "type": "int", "min": 5, "max": 200}, "signal": {"default": 9, "type": "int", "min": 2, "max": 50}}},
     "adx":      {"label": "Average Directional Index",   "category": "trend",      "display": "panel",
-                 "render": {"type": "multi_line", "lines": [
-                     {"prefix": "ADX_", "label": "ADX",  "color": "#f59e0b"},
-                     {"prefix": "DMP_", "label": "+DI",  "color": "#38bdf8"},
-                     {"prefix": "DMN_", "label": "-DI",  "color": "#f472b6"},
-                 ]},
+                 "render": {"type": "line"},
+                 "params": {"length": {"default": 14, "type": "int", "min": 2, "max": 100}}},
+    "dmp":      {"label": "+DI (Positive Directional)", "category": "trend",      "display": "panel",
+                 "render": {"type": "line"},
+                 "params": {"length": {"default": 14, "type": "int", "min": 2, "max": 100}}},
+    "dmn":      {"label": "-DI (Negative Directional)", "category": "trend",      "display": "panel",
+                 "render": {"type": "line"},
                  "params": {"length": {"default": 14, "type": "int", "min": 2, "max": 100}}},
     "aroon":    {"label": "Aroon",                       "category": "trend",      "display": "panel",
                  "render": {"type": "multi_line", "lines": [
@@ -255,6 +257,8 @@ INDICATOR_WARMUP: dict[str, callable] = {
     "mcginley":  lambda p: p.get("length", 14),
     "macd":      lambda p: p.get("slow", 26) + p.get("signal", 9),
     "adx":       lambda p: 2 * p.get("length", 14),
+    "dmp":       lambda p: 2 * p.get("length", 14),
+    "dmn":       lambda p: 2 * p.get("length", 14),
     "aroon":     lambda p: p.get("length", 25),
     "supertrend": lambda p: p.get("atr_length", 10),
     "psar":      lambda p: 2,
@@ -469,7 +473,15 @@ def _add_indicator(df: pd.DataFrame, name: str, params: dict) -> None:
         length = params.get("length", 14)
         ind = ADX(di_period=length, adx_period=length, input_values=get_ohlcv())
         df[f"ADX_{length}"] = _to_series([v.adx if v else None for v in ind], idx)
+
+    elif n == "dmp":
+        length = params.get("length", 14)
+        ind = ADX(di_period=length, adx_period=length, input_values=get_ohlcv())
         df[f"DMP_{length}"] = _to_series([v.plus_di if v else None for v in ind], idx)
+
+    elif n == "dmn":
+        length = params.get("length", 14)
+        ind = ADX(di_period=length, adx_period=length, input_values=get_ohlcv())
         df[f"DMN_{length}"] = _to_series([v.minus_di if v else None for v in ind], idx)
 
     elif n == "aroon":
