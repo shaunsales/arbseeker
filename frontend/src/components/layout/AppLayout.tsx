@@ -5,6 +5,7 @@ import {
   Play,
   TrendingUp,
   ChevronRight,
+  Plug,
 } from "lucide-react";
 import {
   Sidebar,
@@ -59,6 +60,11 @@ const navItems: NavItem[] = [
     label: "Backtest",
     icon: Play,
     to: "/backtest",
+  },
+  {
+    label: "CoinRoutes",
+    icon: Plug,
+    to: "/coinroutes",
   },
 ];
 

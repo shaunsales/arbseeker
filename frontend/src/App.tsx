@@ -7,6 +7,7 @@ import DownloadPage from "@/pages/DownloadPage";
 import StrategyPage from "@/pages/StrategyPage";
 import BasisPage from "@/pages/BasisPage";
 import BacktestPage from "@/pages/BacktestPage";
+import CoinRoutesPage from "@/pages/CoinRoutesPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,9 @@ export default function App() {
 
               {/* Backtest */}
               <Route path="/backtest" element={<BacktestPage />} />
+
+              {/* Execution */}
+              <Route path="/coinroutes" element={<CoinRoutesPage />} />
 
               <Route path="*" element={<Navigate to="/data" replace />} />
             </Route>
