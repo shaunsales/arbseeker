@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getStrategySpec } from "@/api/strategy";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSidebar } from "@/components/ui/sidebar";
 import StrategySpec from "./StrategySpec";
 import CurrentData from "./CurrentData";
 import BuildControls from "./BuildControls";
@@ -13,6 +14,24 @@ interface Props {
 
 export default function StrategyDetail({ className }: Props) {
   const [chartExpanded, setChartExpanded] = useState(false);
+  const { setOpen: setSidebarOpen } = useSidebar();
+  const sidebarWasOpen = useRef(true);
+
+  const handleToggleExpand = useCallback(() => {
+    setChartExpanded((prev) => {
+      const next = !prev;
+      if (next) {
+        // Collapsing sidebar when expanding chart
+        sidebarWasOpen.current = true; // sidebar state before expand
+        setSidebarOpen(false);
+      } else {
+        // Restore sidebar when collapsing chart
+        setSidebarOpen(sidebarWasOpen.current);
+      }
+      return next;
+    });
+  }, [setSidebarOpen]);
+
   const {
     data: status,
     isLoading,
@@ -77,7 +96,7 @@ export default function StrategyDetail({ className }: Props) {
           errors={status.errors}
           onDeleted={refetch}
           chartExpanded={chartExpanded}
-          onToggleExpand={() => setChartExpanded((v) => !v)}
+          onToggleExpand={handleToggleExpand}
         />
       ) : (
         <BuildControls className={className} onBuilt={refetch} />

@@ -349,6 +349,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
     const chart = createChart(mainRef.current, {
       ...chartOptions,
       height: mainChartHeight,
+      autoSize: true,
     });
     chartsRef.current.push(chart);
 
@@ -412,6 +413,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
       const volChart = createChart(volumeRef.current, {
         ...chartOptions,
         height: 80,
+        autoSize: true,
       });
       chartsRef.current.push(volChart);
 
@@ -466,9 +468,9 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
           })}
         </div>
       )}
-      <div ref={mainRef} className="rounded bg-gray-900" />
+      <div ref={mainRef} className="rounded bg-gray-900" style={{ height: mainChartHeight }} />
       {chartData?.volume?.length > 0 && (
-        <div ref={volumeRef} className="rounded bg-gray-900" />
+        <div ref={volumeRef} className="rounded bg-gray-900" style={{ height: 80 }} />
       )}
     </div>
   );
