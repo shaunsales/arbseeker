@@ -1,13 +1,21 @@
 import { useEffect, useRef } from "react";
 import {
   createChart,
+  createSeriesMarkers,
   type IChartApi,
+  type ISeriesApi,
+  type LineWidth,
   ColorType,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
-import type { StrategyChartData, ComputeIndicatorsResponse } from "@/types/api";
+import type {
+  StrategyChartData,
+  ComputeIndicatorsResponse,
+  IndicatorResult,
+  RenderSpec,
+} from "@/types/api";
 
 interface Props {
   chartData: StrategyChartData;
@@ -16,28 +24,242 @@ interface Props {
 }
 
 const COLORS = [
-  "#f59e0b", "#8b5cf6", "#ef4444", "#10b981", "#3b82f6",
-  "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16",
+  "#f59e0b", "#8b5cf6", "#3b82f6", "#ec4899", "#14b8a6",
+  "#f97316", "#6366f1", "#38bdf8", "#e879f9", "#facc15",
 ];
 
-// Second palette for ad-hoc indicators (brighter/distinct)
 const ADHOC_COLORS = [
-  "#38bdf8", "#fb923c", "#a78bfa", "#4ade80", "#f472b6",
-  "#facc15", "#22d3ee", "#e879f9", "#34d399", "#fbbf24",
+  "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15",
+  "#22d3ee", "#e879f9", "#f59e0b", "#818cf8", "#fbbf24",
 ];
+
+// ── Render helpers ──
+
+type TimeValue = { time: number; value: number };
+
+function findCol(series: Record<string, TimeValue[]>, prefix: string): [string, TimeValue[]] | null {
+  for (const [k, v] of Object.entries(series)) {
+    if (k.startsWith(prefix)) return [k, v];
+  }
+  return null;
+}
+
+function renderLineOnChart(
+  chart: IChartApi,
+  data: TimeValue[],
+  title: string,
+  color: string,
+  lineWidth: LineWidth = 2,
+) {
+  const s = chart.addSeries(LineSeries, { color, lineWidth, title });
+  s.setData(data as never[]);
+  return s;
+}
+
+function addLevelLines(chart: IChartApi, levels: number[], color = "rgba(120,120,120,0.3)") {
+  for (const level of levels) {
+    const s = chart.addSeries(LineSeries, {
+      color,
+      lineWidth: 1,
+      lineStyle: 2, // dashed
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    // Create a minimal 2-point line spanning the data
+    s.setData([
+      { time: 0 as never, value: level },
+      { time: 9999999999 as never, value: level },
+    ]);
+  }
+}
+
+function renderOverlayIndicator(
+  chart: IChartApi,
+  candleSeries: ISeriesApi<"Candlestick">,
+  ind: IndicatorResult,
+  colorIdx: number,
+) {
+  const render = ind.render;
+  const color = ADHOC_COLORS[colorIdx % ADHOC_COLORS.length];
+
+  switch (render.type) {
+    case "line": {
+      // Simple line overlay — one series per non-underscore column
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (data?.length) renderLineOnChart(chart, data, col, color);
+      }
+      break;
+    }
+
+    case "markers": {
+      // PSAR-style dots above/below candles
+      const closeMap = new Map<number, number>();
+      if (ind.series._close) {
+        for (const pt of ind.series._close) closeMap.set(pt.time, pt.value);
+      }
+      const markerColor = render.color ?? "#f59e0b";
+      const markers: { time: number; position: string; color: string; shape: string; size: number }[] = [];
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (!data) continue;
+        for (const pt of data) {
+          const close = closeMap.get(pt.time);
+          const above = close !== undefined && pt.value > close;
+          markers.push({
+            time: pt.time,
+            position: above ? "aboveBar" : "belowBar",
+            color: markerColor,
+            shape: "circle",
+            size: render.size ?? 0.5,
+          });
+        }
+      }
+      markers.sort((a, b) => a.time - b.time);
+      createSeriesMarkers(candleSeries, markers as never[]);
+      break;
+    }
+
+    case "bands": {
+      const upper = findCol(ind.series, render.upper_prefix);
+      const middle = findCol(ind.series, render.middle_prefix);
+      const lower = findCol(ind.series, render.lower_prefix);
+      const bandColor = color;
+      if (upper) renderLineOnChart(chart, upper[1], upper[0], bandColor + "99", 1);
+      if (middle) renderLineOnChart(chart, middle[1], middle[0], bandColor, 1);
+      if (lower) renderLineOnChart(chart, lower[1], lower[0], bandColor + "99", 1);
+      break;
+    }
+
+    case "colored_line": {
+      // SuperTrend: color changes based on price vs indicator
+      const closeMap = new Map<number, number>();
+      if (ind.series._close) {
+        for (const pt of ind.series._close) closeMap.set(pt.time, pt.value);
+      }
+      for (const col of ind.columns) {
+        const raw = ind.series[col];
+        if (!raw?.length) continue;
+        const coloredData = raw.map((pt) => {
+          const close = closeMap.get(pt.time);
+          const isAbove = close !== undefined && pt.value > close;
+          return {
+            time: pt.time,
+            value: pt.value,
+            color: isAbove ? render.above_color : render.below_color,
+          };
+        });
+        const s = chart.addSeries(LineSeries, { lineWidth: 2, title: col });
+        s.setData(coloredData as never[]);
+      }
+      break;
+    }
+
+    default: {
+      // Fallback: line for each column
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (data?.length) renderLineOnChart(chart, data, col, color);
+      }
+    }
+  }
+}
+
+function renderPanelIndicator(
+  chart: IChartApi,
+  ind: IndicatorResult,
+  colorIdx: number,
+) {
+  const render: RenderSpec = ind.render;
+  const baseColor = ADHOC_COLORS[colorIdx % ADHOC_COLORS.length];
+
+  switch (render.type) {
+    case "line": {
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (data?.length) renderLineOnChart(chart, data, col, baseColor);
+      }
+      if (render.levels?.length) addLevelLines(chart, render.levels);
+      break;
+    }
+
+    case "histogram": {
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (!data?.length) continue;
+        const histData = data.map((pt) => ({
+          time: pt.time,
+          value: pt.value,
+          color: pt.value >= 0 ? "#38bdf880" : "#f472b680",
+        }));
+        const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: col });
+        s.setData(histData as never[]);
+      }
+      break;
+    }
+
+    case "composite": {
+      // MACD style: mix of lines and histograms
+      let partIdx = 0;
+      for (const part of render.parts) {
+        const match = findCol(ind.series, part.prefix);
+        if (!match) continue;
+        const [colName, data] = match;
+        if (part.style === "histogram") {
+          const histData = data.map((pt) => ({
+            time: pt.time,
+            value: pt.value,
+            color: pt.value >= 0 ? "#38bdf880" : "#f472b680",
+          }));
+          const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: part.label || colName });
+          s.setData(histData as never[]);
+        } else {
+          const c = ADHOC_COLORS[(colorIdx + partIdx) % ADHOC_COLORS.length];
+          renderLineOnChart(chart, data, part.label || colName, c);
+        }
+        partIdx++;
+      }
+      break;
+    }
+
+    case "multi_line": {
+      for (const lineDef of render.lines) {
+        const match = findCol(ind.series, lineDef.prefix);
+        if (!match) continue;
+        const [colName, data] = match;
+        renderLineOnChart(chart, data, lineDef.label || colName, lineDef.color);
+      }
+      if (render.levels?.length) addLevelLines(chart, render.levels);
+      break;
+    }
+
+    default: {
+      // Fallback: line for each column
+      for (const col of ind.columns) {
+        const data = ind.series[col];
+        if (data?.length) renderLineOnChart(chart, data, col, baseColor);
+      }
+    }
+  }
+}
+
+// ── Chart component ──
 
 export default function StrategyChart({ chartData, separateCols, adHocData }: Props) {
   const priceRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
-  const adHocPanelRef = useRef<HTMLDivElement>(null);
+  const adHocPanelsRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
 
-  const hasAdHocPanels = adHocData && Object.keys(adHocData.panels).length > 0;
+  const adHocPanelResults = adHocData?.results.filter((r) => r.display === "panel" && !r.error) ?? [];
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
     chartsRef.current = [];
+    // Clear dynamically created panel divs
+    if (adHocPanelsRef.current) adHocPanelsRef.current.innerHTML = "";
 
     if (!chartData?.ohlcv?.length) return;
 
@@ -56,6 +278,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
     };
 
     // ── Price chart ──
+    let candleSeries: ISeriesApi<"Candlestick"> | null = null;
     if (priceRef.current) {
       const chart = createChart(priceRef.current, {
         ...chartOptions,
@@ -63,7 +286,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       });
       chartsRef.current.push(chart);
 
-      const candleSeries = chart.addSeries(CandlestickSeries, {
+      candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: "#22c55e",
         downColor: "#ef4444",
         borderDownColor: "#ef4444",
@@ -76,26 +299,17 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       // Strategy overlays (from built data)
       let ci = 0;
       for (const [name, data] of Object.entries(chartData.overlays || {})) {
-        const series = chart.addSeries(LineSeries, {
-          color: COLORS[ci % COLORS.length],
-          lineWidth: 1,
-          title: name,
-        });
-        series.setData(data as never[]);
+        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
         ci++;
       }
 
-      // Ad-hoc overlays (from indicator picker)
-      if (adHocData?.overlays) {
-        let aci = 0;
-        for (const [name, data] of Object.entries(adHocData.overlays)) {
-          const series = chart.addSeries(LineSeries, {
-            color: ADHOC_COLORS[aci % ADHOC_COLORS.length],
-            lineWidth: 2,
-            title: name,
-          });
-          series.setData(data as never[]);
-          aci++;
+      // Ad-hoc overlay indicators (render-spec aware)
+      if (adHocData?.results) {
+        let oi = 0;
+        for (const ind of adHocData.results) {
+          if (ind.display !== "overlay" || ind.error) continue;
+          renderOverlayIndicator(chart, candleSeries, ind, oi);
+          oi++;
         }
       }
 
@@ -112,38 +326,32 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
 
       let ci = 0;
       for (const [name, data] of Object.entries(chartData.indicators || {})) {
-        const series = chart.addSeries(LineSeries, {
-          color: COLORS[ci % COLORS.length],
-          lineWidth: 1,
-          title: name,
-        });
-        series.setData(data as never[]);
+        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
         ci++;
       }
 
       chart.timeScale().fitContent();
     }
 
-    // ── Ad-hoc panel indicators ──
-    if (adHocPanelRef.current && hasAdHocPanels) {
-      const chart = createChart(adHocPanelRef.current, {
-        ...chartOptions,
-        height: 150,
-      });
-      chartsRef.current.push(chart);
+    // ── Ad-hoc panel indicators (one chart per indicator) ──
+    if (adHocPanelsRef.current && adHocPanelResults.length > 0) {
+      let panelIdx = 0;
+      for (const ind of adHocPanelResults) {
+        const div = document.createElement("div");
+        div.className = "rounded bg-gray-900";
+        div.style.marginTop = "4px";
+        adHocPanelsRef.current.appendChild(div);
 
-      let aci = 0;
-      for (const [name, data] of Object.entries(adHocData!.panels)) {
-        const series = chart.addSeries(LineSeries, {
-          color: ADHOC_COLORS[aci % ADHOC_COLORS.length],
-          lineWidth: 2,
-          title: name,
+        const chart = createChart(div, {
+          ...chartOptions,
+          height: 150,
         });
-        series.setData(data as never[]);
-        aci++;
-      }
+        chartsRef.current.push(chart);
 
-      chart.timeScale().fitContent();
+        renderPanelIndicator(chart, ind, panelIdx);
+        chart.timeScale().fitContent();
+        panelIdx++;
+      }
     }
 
     // ── Volume chart ──
@@ -190,7 +398,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, separateCols, adHocData, hasAdHocPanels]);
+  }, [chartData, separateCols, adHocData, adHocPanelResults.length]);
 
   return (
     <div className="space-y-1">
@@ -198,9 +406,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       {separateCols.length > 0 && (
         <div ref={indicatorRef} className="rounded bg-gray-900" />
       )}
-      {hasAdHocPanels && (
-        <div ref={adHocPanelRef} className="rounded bg-gray-900" />
-      )}
+      <div ref={adHocPanelsRef} />
       {chartData?.volume?.length > 0 && (
         <div ref={volumeRef} className="rounded bg-gray-900" />
       )}

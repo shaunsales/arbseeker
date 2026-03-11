@@ -354,7 +354,7 @@ class ComputeIndicatorsRequest(BaseModel):
 async def compute_adhoc_indicators(req: ComputeIndicatorsRequest):
     """
     Compute ad-hoc indicators on an existing strategy's OHLCV data.
-    Returns chart-ready time-series for each computed column.
+    Returns per-indicator grouped results with render specs for the chart.
     """
     instance = _get_strategy_instance(req.class_name)
     if instance is None:
@@ -366,90 +366,99 @@ async def compute_adhoc_indicators(req: ComputeIndicatorsRequest):
 
     df = pd.read_parquet(parquet_path)
 
-    # Build indicator tuples
-    ind_tuples = [(ind["name"], ind.get("params", {})) for ind in req.indicators]
-
-    # Compute
-    before_cols = set(df.columns)
-    df = compute_indicators(df, ind_tuples, inplace=True)
-    new_cols = [c for c in df.columns if c not in before_cols]
-
-    if not new_cols:
-        return {"series": {}, "overlays": {}, "panels": {}}
-
-    # Resample for chart performance (same logic as preview)
+    # Compute each indicator individually so we can track which columns it produces
     _RESAMPLE_LADDER = [
         ("1min", "1m"), ("5min", "5m"), ("15min", "15m"),
         ("1h", "1h"), ("4h", "4h"), ("1D", "1d"),
     ]
     max_bars = 8000
-    chart_df = df
-    chart_interval = None
 
+    # Resample OHLCV first (shared across all indicators)
+    chart_df = df.copy()
+    chart_interval = None
     if len(chart_df) > max_bars:
-        ohlcv_agg = {
-            "open": "first", "high": "max", "low": "min",
-            "close": "last", "volume": "sum",
-        }
-        extra_agg = {c: "mean" for c in new_cols}
-        agg_dict = {**ohlcv_agg, **extra_agg}
+        ohlcv_agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
         for rule, label in _RESAMPLE_LADDER:
-            candidate = chart_df.resample(rule).agg(agg_dict).dropna(subset=["open"])
+            candidate = chart_df.resample(rule).agg(ohlcv_agg).dropna(subset=["open"])
             if len(candidate) <= max_bars:
                 chart_df = candidate
                 chart_interval = label
                 break
         else:
-            chart_df = chart_df.resample("1D").agg({**ohlcv_agg, **extra_agg}).dropna(subset=["open"])
+            chart_df = chart_df.resample("1D").agg(ohlcv_agg).dropna(subset=["open"])
             chart_interval = "1d"
 
-    # Determine overlay vs panel for each new column
-    overlay_indicators = set()
-    panel_indicators = set()
-    for ind in req.indicators:
-        meta = INDICATOR_REGISTRY.get(ind["name"].lower(), {})
+    results = []
+
+    for ind_req in req.indicators:
+        ind_name = ind_req["name"].lower()
+        ind_params = ind_req.get("params", {})
+        meta = INDICATOR_REGISTRY.get(ind_name, {})
+        render = meta.get("render", {"type": "line"})
         display = meta.get("display", "panel")
-        if display == "overlay":
-            overlay_indicators.add(ind["name"].lower())
+
+        # Compute on the full-resolution df, then resample
+        work_df = df.copy()
+        before_cols = set(work_df.columns)
+        try:
+            compute_indicators(work_df, [(ind_name, ind_params)], inplace=True)
+        except Exception as e:
+            results.append({"name": ind_name, "error": str(e)})
+            continue
+
+        new_cols = [c for c in work_df.columns if c not in before_cols]
+        if not new_cols:
+            continue
+
+        # Resample indicator columns onto the chart timeframe
+        if chart_interval and chart_interval != "1m":
+            ind_agg = {c: "mean" for c in new_cols}
+            # For markers (PSAR), use "last" instead of "mean"
+            if render.get("type") == "markers":
+                ind_agg = {c: "last" for c in new_cols}
+            resampled = work_df[new_cols].resample(
+                {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1D"}.get(chart_interval, "1D")
+            ).agg(ind_agg)
+            # Align to chart_df index
+            ind_chart = resampled.reindex(chart_df.index)
         else:
-            panel_indicators.add(ind["name"].lower())
+            ind_chart = work_df[new_cols].reindex(chart_df.index)
 
-    overlays: dict[str, list] = {}
-    panels: dict[str, list] = {}
+        # Build series data per column
+        series: dict[str, list] = {}
+        for col in new_cols:
+            col_data = []
+            for ts, v in ind_chart[col].items():
+                if pd.isna(v):
+                    continue
+                col_data.append({"time": int(ts.timestamp()), "value": round(float(v), 6)})
+            series[col] = col_data
 
-    for col in new_cols:
-        series_data = []
-        for ts, v in chart_df[col].items():
-            if pd.isna(v):
-                continue
-            series_data.append({"time": int(ts.timestamp()), "value": round(float(v), 6)})
+        # For markers render type, include close prices so frontend can position dots
+        if render.get("type") == "markers":
+            close_data = []
+            for ts, row in chart_df.iterrows():
+                close_data.append({"time": int(ts.timestamp()), "value": round(float(row["close"]), 6)})
+            series["_close"] = close_data
 
-        # Match column to its source indicator to decide overlay vs panel
-        col_lower = col.lower()
-        is_overlay = False
-        for ind_name in overlay_indicators:
-            if col_lower.startswith(ind_name.upper().lower()) or col_lower.startswith(ind_name):
-                is_overlay = True
-                break
-        # Also check common overlay prefixes
-        if any(col.startswith(p) for p in ("SMA_", "EMA_", "WMA_", "DEMA_", "TEMA_", "HMA_",
-               "KAMA_", "SMMA_", "ZLEMA_", "T3_", "ALMA_", "McGinley_",
-               "BBL_", "BBM_", "BBU_", "KCL_", "KCM_", "KCU_",
-               "DCL_", "DCM_", "DCU_", "SuperTrend_", "PSAR", "VWAP")):
-            is_overlay = True
+        # For colored_line (SuperTrend), include close for color comparison
+        if render.get("type") == "colored_line":
+            close_data = []
+            for ts, row in chart_df.iterrows():
+                close_data.append({"time": int(ts.timestamp()), "value": round(float(row["close"]), 6)})
+            series["_close"] = close_data
 
-        if is_overlay:
-            overlays[col] = series_data
-        else:
-            panels[col] = series_data
+        results.append({
+            "name": ind_name,
+            "label": meta.get("label", ind_name),
+            "display": display,
+            "render": render,
+            "columns": new_cols,
+            "series": series,
+        })
 
-    result = {
-        "overlays": overlays,
-        "panels": panels,
-        "chart_interval": chart_interval,
-        "columns": new_cols,
-    }
-    content = json.loads(json.dumps(result, cls=_NumpyEncoder))
+    output = {"results": results, "chart_interval": chart_interval}
+    content = json.loads(json.dumps(output, cls=_NumpyEncoder))
     return JSONResponse(content=content)
 
 

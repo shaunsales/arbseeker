@@ -226,9 +226,68 @@ export interface ComputeIndicatorsRequest {
   indicators: { name: string; params: Record<string, number> }[];
 }
 
-export interface ComputeIndicatorsResponse {
-  overlays: Record<string, { time: number; value: number }[]>;
-  panels: Record<string, { time: number; value: number }[]>;
-  chart_interval: string | null;
+// Render spec types — describes how to draw each indicator
+export interface RenderLine {
+  type: "line";
+  levels?: number[];
+}
+
+export interface RenderMarkers {
+  type: "markers";
+  shape: string;
+  size: number;
+  color?: string;
+}
+
+export interface RenderBands {
+  type: "bands";
+  upper_prefix: string;
+  middle_prefix: string;
+  lower_prefix: string;
+  fill_color: string;
+}
+
+export interface RenderComposite {
+  type: "composite";
+  parts: { prefix: string; style: "line" | "histogram"; label: string }[];
+}
+
+export interface RenderMultiLine {
+  type: "multi_line";
+  lines: { prefix: string; label: string; color: string }[];
+  levels?: number[];
+}
+
+export interface RenderColoredLine {
+  type: "colored_line";
+  above_color: string;
+  below_color: string;
+}
+
+export interface RenderHistogram {
+  type: "histogram";
+}
+
+export type RenderSpec =
+  | RenderLine
+  | RenderMarkers
+  | RenderBands
+  | RenderComposite
+  | RenderMultiLine
+  | RenderColoredLine
+  | RenderHistogram;
+
+export interface IndicatorResult {
+  name: string;
+  label: string;
+  display: "overlay" | "panel";
+  render: RenderSpec;
   columns: string[];
+  series: Record<string, { time: number; value: number }[]>;
+  error?: string;
+}
+
+export interface ComputeIndicatorsResponse {
+  results: IndicatorResult[];
+  chart_interval: string | null;
 }
