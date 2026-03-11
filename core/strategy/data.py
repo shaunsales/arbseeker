@@ -645,7 +645,13 @@ def _indicator_column_names(name: str, params: dict) -> list[str]:
         return [f"RSI_{params.get('length', 14)}"]
     elif n == "adx":
         length = params.get("length", 14)
-        return [f"ADX_{length}", f"DMP_{length}", f"DMN_{length}"]
+        return [f"ADX_{length}"]
+    elif n == "dmp":
+        length = params.get("length", 14)
+        return [f"DMP_{length}"]
+    elif n == "dmn":
+        length = params.get("length", 14)
+        return [f"DMN_{length}"]
     elif n == "macd":
         f, s, sig = params.get("fast", 12), params.get("slow", 26), params.get("signal", 9)
         return [f"MACD_{f}_{s}_{sig}", f"MACDh_{f}_{s}_{sig}", f"MACDs_{f}_{s}_{sig}"]
