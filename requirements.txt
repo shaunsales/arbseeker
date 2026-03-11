@@ -6,7 +6,7 @@ requests>=2.31.0
 lz4>=4.0.0
 
 # Technical indicators (Phase 2)
-pandas-ta>=0.3.14b
+talipp>=2.0.0
 
 # Visualization
 matplotlib

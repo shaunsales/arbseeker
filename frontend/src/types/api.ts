@@ -201,3 +201,34 @@ export interface PreviewData {
   table_data: Record<string, string | number>[];
   pagination: Pagination;
 }
+
+// ── Indicator types ──
+
+export interface IndicatorParamMeta {
+  default: number;
+  type: "int" | "float";
+  min: number;
+  max: number;
+}
+
+export interface IndicatorMeta {
+  label: string;
+  category: "trend" | "momentum" | "volatility" | "volume";
+  display: "overlay" | "panel";
+  params: Record<string, IndicatorParamMeta>;
+}
+
+export type IndicatorRegistry = Record<string, IndicatorMeta>;
+
+export interface ComputeIndicatorsRequest {
+  class_name: string;
+  interval: string;
+  indicators: { name: string; params: Record<string, number> }[];
+}
+
+export interface ComputeIndicatorsResponse {
+  overlays: Record<string, { time: number; value: number }[]>;
+  panels: Record<string, { time: number; value: number }[]>;
+  chart_interval: string | null;
+  columns: string[];
+}

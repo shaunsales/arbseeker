@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getPreview } from "@/api/strategy";
+import { getPreview, computeIndicators } from "@/api/strategy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { X } from "lucide-react";
 import StrategyChart from "./StrategyChart";
+import IndicatorPicker, { type ActiveIndicator } from "./IndicatorPicker";
+import type { ComputeIndicatorsResponse } from "@/types/api";
 
 interface Props {
   className: string;
@@ -16,11 +18,41 @@ export default function DataPreview({ className, interval, onClose }: Props) {
   const [tab, setTab] = useState<"chart" | "table">("chart");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
+  const [activeIndicators, setActiveIndicators] = useState<ActiveIndicator[]>([]);
+  const [adHocData, setAdHocData] = useState<ComputeIndicatorsResponse | null>(null);
+  const [computing, setComputing] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["strategy-preview", className, interval, page, pageSize],
     queryFn: () => getPreview(className, interval, page, pageSize),
   });
+
+  const handleAddIndicator = useCallback((ind: ActiveIndicator) => {
+    setActiveIndicators((prev) => [...prev, ind]);
+  }, []);
+
+  const handleRemoveIndicator = useCallback((id: string) => {
+    setActiveIndicators((prev) => prev.filter((i) => i.id !== id));
+  }, []);
+
+  const handleCompute = useCallback(async () => {
+    if (activeIndicators.length === 0) return;
+    setComputing(true);
+    try {
+      const result = await computeIndicators({
+        class_name: className,
+        interval,
+        indicators: activeIndicators.map((i) => ({
+          name: i.name,
+          params: i.params,
+        })),
+      });
+      setAdHocData(result);
+    } catch (e) {
+      console.error("Failed to compute indicators:", e);
+    }
+    setComputing(false);
+  }, [activeIndicators, className, interval]);
 
   return (
     <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
@@ -88,10 +120,20 @@ export default function DataPreview({ className, interval, onClose }: Props) {
         <>
           {/* Chart */}
           {tab === "chart" && (
-            <StrategyChart
-              chartData={data.chart_data}
-              separateCols={data.separate_cols}
-            />
+            <>
+              <IndicatorPicker
+                activeIndicators={activeIndicators}
+                onAdd={handleAddIndicator}
+                onRemove={handleRemoveIndicator}
+                onCompute={handleCompute}
+                computing={computing}
+              />
+              <StrategyChart
+                chartData={data.chart_data}
+                separateCols={data.separate_cols}
+                adHocData={adHocData}
+              />
+            </>
           )}
 
           {/* Table */}

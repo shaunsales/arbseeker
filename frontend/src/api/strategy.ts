@@ -5,6 +5,9 @@ import type {
   AvailableDates,
   BuildRequest,
   PreviewData,
+  IndicatorRegistry,
+  ComputeIndicatorsRequest,
+  ComputeIndicatorsResponse,
 } from "@/types/api";
 
 export function listStrategies(): Promise<StrategyListItem[]> {
@@ -38,4 +41,16 @@ export function getPreview(
   return get<PreviewData>(
     `/strategy/preview/${className}/${interval}?page=${page}&page_size=${pageSize}`
   );
+}
+
+export function getIndicatorRegistry(): Promise<IndicatorRegistry> {
+  return get<{ indicators: IndicatorRegistry }>("/strategy/indicators").then(
+    (r) => r.indicators
+  );
+}
+
+export function computeIndicators(
+  req: ComputeIndicatorsRequest
+): Promise<ComputeIndicatorsResponse> {
+  return post<ComputeIndicatorsResponse>("/strategy/indicators/compute", req);
 }

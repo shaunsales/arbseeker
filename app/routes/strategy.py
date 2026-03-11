@@ -29,6 +29,11 @@ from core.strategy.data import (
     load_manifest,
     _subtract_months,
 )
+from core.indicators import (
+    get_indicator_metadata,
+    compute_indicators,
+    INDICATOR_REGISTRY,
+)
 
 router = APIRouter()
 
@@ -326,6 +331,126 @@ async def build_strategy_data(req: BuildRequest):
 
 # Indicator columns that should overlay on the price chart (same scale as price)
 _PRICE_OVERLAY_PREFIXES = ("SMA_", "EMA_", "BB_", "VWAP")
+
+
+# ---------------------------------------------------------------------------
+# Indicator endpoints (for ad-hoc indicator overlay UI)
+# ---------------------------------------------------------------------------
+
+@router.get("/indicators")
+async def indicator_list():
+    """Return all available indicators with their metadata for the UI picker."""
+    registry = get_indicator_metadata()
+    return {"indicators": registry}
+
+
+class ComputeIndicatorsRequest(BaseModel):
+    class_name: str
+    interval: str
+    indicators: list[dict]  # [{"name": "sma", "params": {"length": 20}}, ...]
+
+
+@router.post("/indicators/compute")
+async def compute_adhoc_indicators(req: ComputeIndicatorsRequest):
+    """
+    Compute ad-hoc indicators on an existing strategy's OHLCV data.
+    Returns chart-ready time-series for each computed column.
+    """
+    instance = _get_strategy_instance(req.class_name)
+    if instance is None:
+        return JSONResponse({"error": "Strategy not found"}, status_code=404)
+
+    parquet_path = strategy_folder(instance.name) / "data" / f"{req.interval}.parquet"
+    if not parquet_path.exists():
+        return JSONResponse({"error": f"No data file for {req.interval}"}, status_code=404)
+
+    df = pd.read_parquet(parquet_path)
+
+    # Build indicator tuples
+    ind_tuples = [(ind["name"], ind.get("params", {})) for ind in req.indicators]
+
+    # Compute
+    before_cols = set(df.columns)
+    df = compute_indicators(df, ind_tuples, inplace=True)
+    new_cols = [c for c in df.columns if c not in before_cols]
+
+    if not new_cols:
+        return {"series": {}, "overlays": {}, "panels": {}}
+
+    # Resample for chart performance (same logic as preview)
+    _RESAMPLE_LADDER = [
+        ("1min", "1m"), ("5min", "5m"), ("15min", "15m"),
+        ("1h", "1h"), ("4h", "4h"), ("1D", "1d"),
+    ]
+    max_bars = 8000
+    chart_df = df
+    chart_interval = None
+
+    if len(chart_df) > max_bars:
+        ohlcv_agg = {
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }
+        extra_agg = {c: "mean" for c in new_cols}
+        agg_dict = {**ohlcv_agg, **extra_agg}
+        for rule, label in _RESAMPLE_LADDER:
+            candidate = chart_df.resample(rule).agg(agg_dict).dropna(subset=["open"])
+            if len(candidate) <= max_bars:
+                chart_df = candidate
+                chart_interval = label
+                break
+        else:
+            chart_df = chart_df.resample("1D").agg({**ohlcv_agg, **extra_agg}).dropna(subset=["open"])
+            chart_interval = "1d"
+
+    # Determine overlay vs panel for each new column
+    overlay_indicators = set()
+    panel_indicators = set()
+    for ind in req.indicators:
+        meta = INDICATOR_REGISTRY.get(ind["name"].lower(), {})
+        display = meta.get("display", "panel")
+        if display == "overlay":
+            overlay_indicators.add(ind["name"].lower())
+        else:
+            panel_indicators.add(ind["name"].lower())
+
+    overlays: dict[str, list] = {}
+    panels: dict[str, list] = {}
+
+    for col in new_cols:
+        series_data = []
+        for ts, v in chart_df[col].items():
+            if pd.isna(v):
+                continue
+            series_data.append({"time": int(ts.timestamp()), "value": round(float(v), 6)})
+
+        # Match column to its source indicator to decide overlay vs panel
+        col_lower = col.lower()
+        is_overlay = False
+        for ind_name in overlay_indicators:
+            if col_lower.startswith(ind_name.upper().lower()) or col_lower.startswith(ind_name):
+                is_overlay = True
+                break
+        # Also check common overlay prefixes
+        if any(col.startswith(p) for p in ("SMA_", "EMA_", "WMA_", "DEMA_", "TEMA_", "HMA_",
+               "KAMA_", "SMMA_", "ZLEMA_", "T3_", "ALMA_", "McGinley_",
+               "BBL_", "BBM_", "BBU_", "KCL_", "KCM_", "KCU_",
+               "DCL_", "DCM_", "DCU_", "SuperTrend_", "PSAR", "VWAP")):
+            is_overlay = True
+
+        if is_overlay:
+            overlays[col] = series_data
+        else:
+            panels[col] = series_data
+
+    result = {
+        "overlays": overlays,
+        "panels": panels,
+        "chart_interval": chart_interval,
+        "columns": new_cols,
+    }
+    content = json.loads(json.dumps(result, cls=_NumpyEncoder))
+    return JSONResponse(content=content)
 
 
 @router.get("/preview/{class_name}/{interval}")
