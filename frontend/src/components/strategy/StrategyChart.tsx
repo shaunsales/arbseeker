@@ -50,13 +50,14 @@ function renderLineOnChart(
   title: string,
   color: string,
   lineWidth: LineWidth = 2,
+  paneIndex?: number,
 ) {
-  const s = chart.addSeries(LineSeries, { color, lineWidth, title });
+  const s = chart.addSeries(LineSeries, { color, lineWidth, title }, paneIndex);
   s.setData(data as never[]);
   return s;
 }
 
-function addLevelLines(chart: IChartApi, levels: number[], color = "rgba(120,120,120,0.3)") {
+function addLevelLines(chart: IChartApi, levels: number[], paneIndex?: number, color = "rgba(120,120,120,0.3)") {
   for (const level of levels) {
     const s = chart.addSeries(LineSeries, {
       color,
@@ -65,7 +66,7 @@ function addLevelLines(chart: IChartApi, levels: number[], color = "rgba(120,120
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
-    });
+    }, paneIndex);
     // Create a minimal 2-point line spanning the data
     s.setData([
       { time: 0 as never, value: level },
@@ -170,6 +171,7 @@ function renderPanelIndicator(
   chart: IChartApi,
   ind: IndicatorResult,
   colorIdx: number,
+  paneIndex?: number,
 ) {
   const render: RenderSpec = ind.render;
   const baseColor = ADHOC_COLORS[colorIdx % ADHOC_COLORS.length];
@@ -178,9 +180,9 @@ function renderPanelIndicator(
     case "line": {
       for (const col of ind.columns) {
         const data = ind.series[col];
-        if (data?.length) renderLineOnChart(chart, data, col, baseColor);
+        if (data?.length) renderLineOnChart(chart, data, col, baseColor, 2, paneIndex);
       }
-      if (render.levels?.length) addLevelLines(chart, render.levels);
+      if (render.levels?.length) addLevelLines(chart, render.levels, paneIndex);
       break;
     }
 
@@ -193,7 +195,7 @@ function renderPanelIndicator(
           value: pt.value,
           color: pt.value >= 0 ? "#38bdf880" : "#f472b680",
         }));
-        const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: col });
+        const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: col }, paneIndex);
         s.setData(histData as never[]);
       }
       break;
@@ -212,11 +214,11 @@ function renderPanelIndicator(
             value: pt.value,
             color: pt.value >= 0 ? "#38bdf880" : "#f472b680",
           }));
-          const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: part.label || colName });
+          const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: part.label || colName }, paneIndex);
           s.setData(histData as never[]);
         } else {
           const c = ADHOC_COLORS[(colorIdx + partIdx) % ADHOC_COLORS.length];
-          renderLineOnChart(chart, data, part.label || colName, c);
+          renderLineOnChart(chart, data, part.label || colName, c, 2, paneIndex);
         }
         partIdx++;
       }
@@ -228,9 +230,9 @@ function renderPanelIndicator(
         const match = findCol(ind.series, lineDef.prefix);
         if (!match) continue;
         const [colName, data] = match;
-        renderLineOnChart(chart, data, lineDef.label || colName, lineDef.color);
+        renderLineOnChart(chart, data, lineDef.label || colName, lineDef.color, 2, paneIndex);
       }
-      if (render.levels?.length) addLevelLines(chart, render.levels);
+      if (render.levels?.length) addLevelLines(chart, render.levels, paneIndex);
       break;
     }
 
@@ -238,7 +240,7 @@ function renderPanelIndicator(
       // Fallback: line for each column
       for (const col of ind.columns) {
         const data = ind.series[col];
-        if (data?.length) renderLineOnChart(chart, data, col, baseColor);
+        if (data?.length) renderLineOnChart(chart, data, col, baseColor, 2, paneIndex);
       }
     }
   }
@@ -255,10 +257,8 @@ interface LegendItem {
 // ── Chart component ──
 
 export default function StrategyChart({ chartData, separateCols, adHocData }: Props) {
-  const priceRef = useRef<HTMLDivElement>(null);
-  const indicatorRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
-  const adHocPanelsRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
   const [hidden, setHidden] = useState<string[]>([]);
 
@@ -281,7 +281,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       ci++;
     }
 
-    // Built-data separate indicators (e.g. ADX_14, DMP_14, DMN_14)
+    // Built-data separate indicators (e.g. ADX_14)
     ci = 0;
     for (const col of Object.keys(chartData?.indicators || {})) {
       items.push({ key: `built:${col}`, label: col, color: COLORS[ci % COLORS.length] });
@@ -293,10 +293,11 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       let oi = 0;
       for (const ind of adHocData.results) {
         if (ind.error) continue;
-        const color = ind.display === "overlay"
-          ? ADHOC_COLORS[oi % ADHOC_COLORS.length]
-          : ADHOC_COLORS[oi % ADHOC_COLORS.length];
-        items.push({ key: `adhoc:${ind.name}`, label: ind.label, color });
+        items.push({
+          key: `adhoc:${ind.name}`,
+          label: ind.label,
+          color: ADHOC_COLORS[oi % ADHOC_COLORS.length],
+        });
         oi++;
       }
     }
@@ -307,14 +308,21 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
   const adHocOverlayResults = adHocData?.results.filter((r) => r.display === "overlay" && !r.error) ?? [];
   const adHocPanelResults = adHocData?.results.filter((r) => r.display === "panel" && !r.error) ?? [];
 
-  const visibleSeparateCount = Object.keys(chartData?.indicators || {}).filter(
+  // Count visible panel indicators to compute chart height
+  const visibleBuiltPanels = Object.keys(chartData?.indicators || {}).filter(
     (col) => !hiddenSet.has(`built:${col}`)
-  ).length;
+  );
+  const visibleAdHocPanels = adHocPanelResults.filter(
+    (ind) => !hiddenSet.has(`adhoc:${ind.name}`)
+  );
+  // Group built panels into one pane, each ad-hoc panel gets its own pane
+  const numPanelPanes =
+    (visibleBuiltPanels.length > 0 ? 1 : 0) + visibleAdHocPanels.length;
+  const mainChartHeight = 300 + numPanelPanes * 120;
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
     chartsRef.current = [];
-    if (adHocPanelsRef.current) adHocPanelsRef.current.innerHTML = "";
 
     if (!chartData?.ohlcv?.length) return;
 
@@ -332,131 +340,91 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       timeScale: { borderColor: "#374151", timeVisible: true },
     };
 
-    // ── Price chart ──
-    let candleSeries: ISeriesApi<"Candlestick"> | null = null;
-    if (priceRef.current) {
-      const chart = createChart(priceRef.current, {
-        ...chartOptions,
-        height: 300,
-      });
-      chartsRef.current.push(chart);
+    // ── Single main chart (price pane 0 + indicator panes 1+) ──
+    if (!mainRef.current) return;
 
-      candleSeries = chart.addSeries(CandlestickSeries, {
-        upColor: "#22c55e",
-        downColor: "#ef4444",
-        borderDownColor: "#ef4444",
-        borderUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
-        wickUpColor: "#22c55e",
-      });
-      candleSeries.setData(chartData.ohlcv as never[]);
+    const chart = createChart(mainRef.current, {
+      ...chartOptions,
+      height: mainChartHeight,
+    });
+    chartsRef.current.push(chart);
 
-      // Strategy overlays (from built data) — filtered by visibility
-      let ci = 0;
-      for (const [name, data] of Object.entries(chartData.overlays || {})) {
-        if (!hiddenSet.has(`built:${name}`)) {
-          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
-        }
-        ci++;
+    // Pane 0: Price candles
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderDownColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+    });
+    candleSeries.setData(chartData.ohlcv as never[]);
+
+    // Pane 0: Strategy overlays (from built data) — filtered by visibility
+    let ci = 0;
+    for (const [name, data] of Object.entries(chartData.overlays || {})) {
+      if (!hiddenSet.has(`built:${name}`)) {
+        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
       }
-
-      // Ad-hoc overlay indicators (render-spec aware) — filtered by visibility
-      if (adHocData?.results) {
-        let oi = 0;
-        for (const ind of adHocOverlayResults) {
-          if (!hiddenSet.has(`adhoc:${ind.name}`)) {
-            renderOverlayIndicator(chart, candleSeries, ind, oi);
-          }
-          oi++;
-        }
-      }
-
-      chart.timeScale().fitContent();
+      ci++;
     }
 
-    // ── Strategy indicator chart (from built data) — filtered by visibility ──
-    const visibleSeparateCols = Object.entries(chartData?.indicators || {}).filter(
-      ([col]) => !hiddenSet.has(`built:${col}`)
-    );
-    if (indicatorRef.current && visibleSeparateCols.length > 0) {
-      const chart = createChart(indicatorRef.current, {
-        ...chartOptions,
-        height: 150,
-      });
-      chartsRef.current.push(chart);
+    // Pane 0: Ad-hoc overlay indicators — filtered by visibility
+    let oi = 0;
+    for (const ind of adHocOverlayResults) {
+      if (!hiddenSet.has(`adhoc:${ind.name}`)) {
+        renderOverlayIndicator(chart, candleSeries, ind, oi);
+      }
+      oi++;
+    }
 
-      // Maintain original color index so colors stay stable
-      let ci = 0;
+    // Track next pane index (pane 0 = price, pane 1+ = panels)
+    let nextPane = 1;
+
+    // Pane 1: Built-data separate indicators (all on one pane) — filtered
+    if (visibleBuiltPanels.length > 0) {
+      const pane = nextPane++;
+      ci = 0;
       for (const [name, data] of Object.entries(chartData.indicators || {})) {
         if (!hiddenSet.has(`built:${name}`)) {
-          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1, pane);
         }
         ci++;
       }
-
-      chart.timeScale().fitContent();
     }
 
-    // ── Ad-hoc panel indicators (one chart per indicator) — filtered by visibility ──
-    if (adHocPanelsRef.current) {
-      let panelIdx = 0;
-      for (const ind of adHocPanelResults) {
-        if (hiddenSet.has(`adhoc:${ind.name}`)) { panelIdx++; continue; }
-
-        const div = document.createElement("div");
-        div.className = "rounded bg-gray-900";
-        div.style.marginTop = "4px";
-        adHocPanelsRef.current.appendChild(div);
-
-        const chart = createChart(div, {
-          ...chartOptions,
-          height: 150,
-        });
-        chartsRef.current.push(chart);
-
-        renderPanelIndicator(chart, ind, panelIdx);
-        chart.timeScale().fitContent();
-        panelIdx++;
+    // Pane 2+: Ad-hoc panel indicators (one pane each) — filtered
+    let panelIdx = 0;
+    for (const ind of adHocPanelResults) {
+      if (!hiddenSet.has(`adhoc:${ind.name}`)) {
+        renderPanelIndicator(chart, ind, panelIdx, nextPane++);
       }
+      panelIdx++;
     }
 
-    // ── Volume chart ──
+    chart.timeScale().fitContent();
+
+    // ── Volume chart (separate, small) ──
     if (volumeRef.current && chartData.volume?.length) {
-      const chart = createChart(volumeRef.current, {
+      const volChart = createChart(volumeRef.current, {
         ...chartOptions,
         height: 80,
       });
-      chartsRef.current.push(chart);
+      chartsRef.current.push(volChart);
 
-      const volSeries = chart.addSeries(HistogramSeries, {
+      const volSeries = volChart.addSeries(HistogramSeries, {
         priceFormat: { type: "volume" },
         priceScaleId: "",
       });
       volSeries.setData(chartData.volume as never[]);
+      volChart.timeScale().fitContent();
 
-      chart.timeScale().fitContent();
-    }
-
-    // Sync time scales
-    if (chartsRef.current.length > 1) {
-      const primary = chartsRef.current[0];
-      const rest = chartsRef.current.slice(1);
-
-      primary.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (range) {
-          rest.forEach((c) => c.timeScale().setVisibleLogicalRange(range));
-        }
+      // Sync main chart ↔ volume chart
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (range) volChart.timeScale().setVisibleLogicalRange(range);
       });
-
-      rest.forEach((c) => {
-        c.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-          if (range) {
-            primary.timeScale().setVisibleLogicalRange(range);
-            rest
-              .filter((r) => r !== c)
-              .forEach((r) => r.timeScale().setVisibleLogicalRange(range));
-          }
-        });
+      volChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (range) chart.timeScale().setVisibleLogicalRange(range);
       });
     }
 
@@ -464,7 +432,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, separateCols, adHocData, adHocOverlayResults.length, adHocPanelResults.length, hidden]);
+  }, [chartData, separateCols, adHocData, adHocOverlayResults.length, adHocPanelResults.length, hidden, mainChartHeight]);
 
   return (
     <div className="space-y-1">
@@ -495,11 +463,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
           })}
         </div>
       )}
-      <div ref={priceRef} className="rounded bg-gray-900" />
-      {visibleSeparateCount > 0 && (
-        <div ref={indicatorRef} className="rounded bg-gray-900" />
-      )}
-      <div ref={adHocPanelsRef} />
+      <div ref={mainRef} className="rounded bg-gray-900" />
       {chartData?.volume?.length > 0 && (
         <div ref={volumeRef} className="rounded bg-gray-900" />
       )}
