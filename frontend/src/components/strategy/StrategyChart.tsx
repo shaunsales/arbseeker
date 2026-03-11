@@ -8,6 +8,7 @@ import {
   LineSeries,
   HistogramSeries,
 } from "lightweight-charts";
+import { DotsSeries } from "@/plugins/dots-series";
 import type {
   StrategyChartData,
   ComputeIndicatorsResponse,
@@ -93,16 +94,14 @@ function renderOverlayIndicator(
     }
 
     case "markers": {
-      // PSAR-style: dotted line tracing above/below candles
+      // PSAR-style: custom dots series for crisp retina-aware small circles
       const markerColor = render.color ?? "#f59e0b";
       for (const col of ind.columns) {
         const data = ind.series[col];
         if (!data?.length) continue;
-        const s = chart.addSeries(LineSeries, {
-          color: markerColor,
-          lineWidth: 2,
-          lineStyle: 3, // Dotted
-          crosshairMarkerVisible: false,
+        const s = chart.addCustomSeries(new DotsSeries(), {
+          dotColor: markerColor,
+          radius: 2,
           lastValueVisible: false,
           priceLineVisible: false,
           title: col,
