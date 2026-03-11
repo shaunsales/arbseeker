@@ -102,7 +102,7 @@ function renderOverlayIndicator(
           color: markerColor,
           lineVisible: false,
           pointMarkersVisible: true,
-          pointMarkersRadius: render.size ?? 1.5,
+          pointMarkersRadius: render.size ?? 3,
           crosshairMarkerVisible: false,
           lastValueVisible: false,
           priceLineVisible: false,
