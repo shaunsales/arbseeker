@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getPreview, computeIndicators } from "@/api/strategy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { X } from "lucide-react";
+import { X, Maximize2, Minimize2 } from "lucide-react";
 import StrategyChart from "./StrategyChart";
 import IndicatorPicker, { type ActiveIndicator } from "./IndicatorPicker";
 import type { ComputeIndicatorsResponse } from "@/types/api";
@@ -12,9 +12,11 @@ interface Props {
   className: string;
   interval: string;
   onClose: () => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
-export default function DataPreview({ className, interval, onClose }: Props) {
+export default function DataPreview({ className, interval, onClose, expanded, onToggleExpand }: Props) {
   const [tab, setTab] = useState<"chart" | "table">("chart");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -83,12 +85,23 @@ export default function DataPreview({ className, interval, onClose }: Props) {
             </>
           )}
         </div>
-        <button
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-300 transition"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onToggleExpand && (
+            <button
+              onClick={onToggleExpand}
+              className="text-gray-500 hover:text-gray-300 transition"
+              title={expanded ? "Collapse chart" : "Expand chart"}
+            >
+              {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-300 transition"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -132,6 +145,7 @@ export default function DataPreview({ className, interval, onClose }: Props) {
                 chartData={data.chart_data}
                 separateCols={data.separate_cols}
                 adHocData={adHocData}
+                expanded={expanded}
               />
             </>
           )}

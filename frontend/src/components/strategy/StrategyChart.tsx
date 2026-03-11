@@ -21,6 +21,7 @@ interface Props {
   chartData: StrategyChartData;
   separateCols: string[];
   adHocData?: ComputeIndicatorsResponse | null;
+  expanded?: boolean;
 }
 
 const COLORS = [
@@ -256,7 +257,7 @@ interface LegendItem {
 
 // ── Chart component ──
 
-export default function StrategyChart({ chartData, separateCols, adHocData }: Props) {
+export default function StrategyChart({ chartData, separateCols, adHocData, expanded }: Props) {
   const mainRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
@@ -318,7 +319,9 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
   // Group built panels into one pane, each ad-hoc panel gets its own pane
   const numPanelPanes =
     (visibleBuiltPanels.length > 0 ? 1 : 0) + visibleAdHocPanels.length;
-  const mainChartHeight = 300 + numPanelPanes * 120;
+  const baseHeight = expanded ? 500 : 300;
+  const paneHeight = expanded ? 160 : 120;
+  const mainChartHeight = baseHeight + numPanelPanes * paneHeight;
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -432,7 +435,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData }: Pr
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, separateCols, adHocData, adHocOverlayResults.length, adHocPanelResults.length, hidden, mainChartHeight]);
+  }, [chartData, separateCols, adHocData, adHocOverlayResults.length, adHocPanelResults.length, hidden, mainChartHeight, expanded]);
 
   return (
     <div className="space-y-1">

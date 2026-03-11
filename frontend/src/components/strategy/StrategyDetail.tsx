@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getStrategySpec } from "@/api/strategy";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function StrategyDetail({ className }: Props) {
+  const [chartExpanded, setChartExpanded] = useState(false);
   const {
     data: status,
     isLoading,
@@ -31,7 +33,7 @@ export default function StrategyDetail({ className }: Props) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className={`mx-auto space-y-4 transition-all ${chartExpanded ? "max-w-7xl" : "max-w-3xl"}`}>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -74,6 +76,8 @@ export default function StrategyDetail({ className }: Props) {
           manifest={status.manifest}
           errors={status.errors}
           onDeleted={refetch}
+          chartExpanded={chartExpanded}
+          onToggleExpand={() => setChartExpanded((v) => !v)}
         />
       ) : (
         <BuildControls className={className} onBuilt={refetch} />
