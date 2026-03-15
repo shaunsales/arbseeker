@@ -22,6 +22,7 @@ from app.routes.data import _NumpyEncoder
 
 from core.strategy.base import SingleAssetStrategy
 from core.data.storage import list_available_periods
+from core.data.binance import get_funding_path
 from core.strategy.data import (
     StrategyDataSpec,
     StrategyDataBuilder,
@@ -94,6 +95,11 @@ def discover_strategies() -> list[dict]:
                 except Exception:
                     pass
 
+                # Check funding rate availability
+                has_funding_rates = False
+                if spec is not None and spec.market == "futures":
+                    has_funding_rates = get_funding_path(spec.ticker, spec.market).exists()
+
                 results.append({
                     "class_name": attr_name,
                     "module": f"strategies.{modname}",
@@ -101,6 +107,7 @@ def discover_strategies() -> list[dict]:
                     "has_data_spec": spec is not None,
                     "spec": spec,
                     "data_date_range": data_date_range,
+                    "has_funding_rates": has_funding_rates,
                     "last_modified": last_modified,
                 })
 
@@ -153,6 +160,7 @@ async def strategy_list():
                 "module": s["module"],
                 "has_data_spec": s["has_data_spec"],
                 "data_date_range": s.get("data_date_range"),
+                "has_funding_rates": s.get("has_funding_rates", False),
                 "last_modified": s.get("last_modified"),
             }
             for s in strategies

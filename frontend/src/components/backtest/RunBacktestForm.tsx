@@ -19,6 +19,10 @@ export default function RunBacktestForm({ strategy, onRunComplete }: Props) {
   const [commissionBps, setCommissionBps] = useState("3.5");
   const [slippageBps, setSlippageBps] = useState("2.0");
   const [fundingBps, setFundingBps] = useState("3.0");
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slPct, setSlPct] = useState("5.0");
+  const [tslEnabled, setTslEnabled] = useState(false);
+  const [tslPct, setTslPct] = useState("5.0");
   const [error, setError] = useState("");
 
   const dateRange = strategy.data_date_range ?? null;
@@ -55,6 +59,8 @@ export default function RunBacktestForm({ strategy, onRunComplete }: Props) {
       funding_daily_bps: parseFloat(fundingBps) || 0,
       start_date: startDate || undefined,
       end_date: endDate || undefined,
+      stop_loss_pct: slEnabled ? (parseFloat(slPct) || null) : null,
+      trailing_stop_pct: tslEnabled ? (parseFloat(tslPct) || null) : null,
     });
   };
 
@@ -100,6 +106,56 @@ export default function RunBacktestForm({ strategy, onRunComplete }: Props) {
             <span className="text-[10px] text-gray-600">Funding/day</span>
             <Input type="number" step="0.5" value={fundingBps} onChange={(e) => setFundingBps(e.target.value)} className="h-7 text-xs" />
           </div>
+        </div>
+      </div>
+
+      {/* Risk Management — SL / TSL */}
+      <div>
+        <label className="mb-1 block text-[11px] text-gray-500">Risk Management</label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSlEnabled(!slEnabled)}
+              className={`h-5 w-9 rounded-full transition-colors ${
+                slEnabled ? "bg-blue-600" : "bg-gray-700"
+              } relative`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                slEnabled ? "left-[18px]" : "left-0.5"
+              }`} />
+            </button>
+            <span className="text-[11px] text-gray-400 w-24">Stop Loss</span>
+            {slEnabled && (
+              <div className="flex items-center gap-1">
+                <Input type="number" step="0.5" min="0.1" value={slPct} onChange={(e) => setSlPct(e.target.value)} className="h-7 w-20 text-xs" />
+                <span className="text-[10px] text-gray-500">%</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTslEnabled(!tslEnabled)}
+              className={`h-5 w-9 rounded-full transition-colors ${
+                tslEnabled ? "bg-blue-600" : "bg-gray-700"
+              } relative`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                tslEnabled ? "left-[18px]" : "left-0.5"
+              }`} />
+            </button>
+            <span className="text-[11px] text-gray-400 w-24">Trailing Stop</span>
+            {tslEnabled && (
+              <div className="flex items-center gap-1">
+                <Input type="number" step="0.5" min="0.1" value={tslPct} onChange={(e) => setTslPct(e.target.value)} className="h-7 w-20 text-xs" />
+                <span className="text-[10px] text-gray-500">%</span>
+              </div>
+            )}
+          </div>
+          {!slEnabled && !tslEnabled && (
+            <p className="text-[10px] text-gray-600 italic">Using strategy defaults (if any)</p>
+          )}
         </div>
       </div>
 

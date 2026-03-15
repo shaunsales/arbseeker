@@ -468,6 +468,18 @@ class StrategyDataBuilder:
                     print(f"  WARNING: {null_any_bars} bars still have NaN values "
                           f"after trimming — may need more warmup data")
 
+        # Auto-download funding rates for futures symbols
+        has_funding_rates = False
+        if spec.market == "futures":
+            from core.data.binance import ensure_funding_rates
+            fr_path = ensure_funding_rates(spec.ticker, start_date, end_date)
+            has_funding_rates = fr_path is not None
+            if self.verbose:
+                if has_funding_rates:
+                    print(f"Funding rates available for {spec.ticker}")
+                else:
+                    print(f"No funding rate data for {spec.ticker} — backtest will use flat fallback")
+
         # Build manifest
         manifest = {
             "strategy_name": strategy_name,
@@ -476,6 +488,7 @@ class StrategyDataBuilder:
             "periods": periods,
             "built_at": datetime.utcnow().isoformat(),
             "quality": quality_summary,
+            "has_funding_rates": has_funding_rates,
         }
 
         manifest_path = save_manifest(strategy_name, manifest)

@@ -6,6 +6,7 @@ Reads results from output/strategies/{name}/results/.
 """
 
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel
 
 from app.routes.strategy import discover_strategies, _get_strategy_instance
 from core.strategy.data import strategy_folder, STRATEGIES_OUTPUT_DIR, _indicator_column_names
+from core.data.binance import load_funding_rates
 from core.indicators.indicators import INDICATOR_REGISTRY
 from core.strategy.engine import BacktestEngine
 from core.strategy.position import CostModel, DEFAULT_COSTS
@@ -188,6 +190,20 @@ async def view_run(strategy_name: str, run_id: str):
         if "drawdown_pct" in bars_r.columns:
             chart_data["drawdown"] = _series_to_json(bars_r.index, bars_r["drawdown_pct"])
 
+        # Daily-resampled NAV + rolling max drawdown for the Performance chart
+        if "nav" in bars_df.columns:
+            daily = bars_df[["nav"]].resample("1D").last().dropna()
+            initial_nav = daily["nav"].iloc[0]
+            if initial_nav and initial_nav != 0:
+                daily_nav = daily["nav"] / initial_nav
+            else:
+                daily_nav = daily["nav"]
+            peak = daily_nav.cummax()
+            daily_dd = ((daily_nav - peak) / peak) * 100
+            rolling_mdd = daily_dd.cummin()
+            chart_data["daily_nav"] = _series_to_json(daily.index, daily_nav)
+            chart_data["daily_mdd"] = _series_to_json(daily.index, rolling_mdd)
+
     # ------------------------------------------------------------------
     # Load trades
     # ------------------------------------------------------------------
@@ -207,6 +223,10 @@ async def view_run(strategy_name: str, run_id: str):
                 elif isinstance(raw_meta, dict):
                     trade_metadata = raw_meta
 
+            funding_cost = round(float(row.get("funding_cost", 0)), 2)
+            total_costs = round(float(row["costs"]), 2)
+            fees = round(total_costs - funding_cost, 2)
+
             trades.append({
                 "side": row.get("side", ""),
                 "entry_time": str(row["entry_time"]),
@@ -215,7 +235,9 @@ async def view_run(strategy_name: str, run_id: str):
                 "exit_price": round(float(row["exit_price"]), 2),
                 "size": round(float(row["size"]), 0),
                 "gross_pnl": round(float(row["gross_pnl"]), 2),
-                "costs": round(float(row["costs"]), 2),
+                "costs": total_costs,
+                "fees": fees,
+                "funding_cost": funding_cost,
                 "net_pnl": round(float(row["net_pnl"]), 2),
                 "bars_held": int(row["bars_held"]),
                 "entry_reason": row.get("entry_reason", ""),
@@ -231,17 +253,17 @@ async def view_run(strategy_name: str, run_id: str):
             is_long = row.get("side", "") == "long"
             chart_data["markers"].append({
                 "time": int(entry_ts.timestamp()),
-                "position": "belowBar" if is_long else "aboveBar",
-                "color": "#22c55e" if is_long else "#ef4444",
-                "shape": "arrowUp" if is_long else "arrowDown",
-                "text": f"{'L' if is_long else 'S'} {row.get('entry_reason', '')}",
+                "position": "aboveBar",
+                "color": "#06b6d4" if is_long else "#f97316",
+                "shape": "arrowDown" if is_long else "arrowDown",
+                "text": f"{'▲L' if is_long else '▼S'}",
             })
             chart_data["markers"].append({
                 "time": int(exit_ts.timestamp()),
-                "position": "aboveBar" if is_long else "belowBar",
+                "position": "belowBar",
                 "color": "#a855f7",
-                "shape": "circle",
-                "text": f"X {row.get('exit_reason', '')}",
+                "shape": "arrowUp",
+                "text": f"✕",
             })
 
     # ------------------------------------------------------------------
@@ -300,6 +322,27 @@ async def view_run(strategy_name: str, run_id: str):
                     "series": _series_to_json(ind_aligned.index, ind_aligned[col]),
                 })
 
+    # (max_drawdown series now computed as daily_mdd above)
+
+    # ------------------------------------------------------------------
+    # Load funding rate data for the strategy's symbol
+    # ------------------------------------------------------------------
+    # Only include funding rates if trades actually used per-symbol funding
+    has_funding_costs = any(t.get("funding_cost", 0) != 0 for t in trades)
+    funding_rates_data: list[dict] | None = None
+    if has_funding_costs and manifest_path.exists():
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        ticker = manifest.get("spec", {}).get("ticker")
+        market = manifest.get("spec", {}).get("market", "futures")
+        if ticker and market == "futures":
+            fr_df = load_funding_rates(ticker, market)
+            if fr_df is not None:
+                funding_rates_data = [
+                    {"month": str(idx), "rate_bps": round(row["median_daily_bps"], 2)}
+                    for idx, row in fr_df.iterrows()
+                ]
+
     # ------------------------------------------------------------------
     tearsheet_exists = (results_dir / f"{run_id}_tearsheet.html").exists()
 
@@ -310,8 +353,23 @@ async def view_run(strategy_name: str, run_id: str):
         "chart_data": chart_data,
         "trades": trades,
         "indicators": indicators,
+        "funding_rates": funding_rates_data,
         "tearsheet_exists": tearsheet_exists,
     }
+
+
+@router.delete("/delete/{strategy_name}/{run_id}")
+async def delete_run(strategy_name: str, run_id: str):
+    """Delete a backtest run's files."""
+    results_dir = strategy_folder(strategy_name) / "results"
+    prefix = f"{run_id}"
+    deleted = []
+    for f in results_dir.glob(f"{prefix}*"):
+        f.unlink()
+        deleted.append(f.name)
+    if not deleted:
+        return JSONResponse({"error": "Run not found"}, status_code=404)
+    return {"success": True, "deleted": deleted}
 
 
 @router.get("/tearsheet/{strategy_name}/{run_id}")
@@ -331,6 +389,8 @@ class RunBacktestRequest(BaseModel):
     funding_daily_bps: float = 3.0
     start_date: str | None = None  # "YYYY-MM" — inclusive start
     end_date: str | None = None    # "YYYY-MM" — inclusive end (last day of month)
+    stop_loss_pct: float | None = None        # Fixed SL % from entry (None = use strategy default)
+    trailing_stop_pct: float | None = None    # TSL % from best price (None = use strategy default)
 
 
 @router.post("/run")
@@ -357,6 +417,8 @@ async def run_backtest(req: RunBacktestRequest):
             costs=costs,
             start_date=req.start_date,
             end_date=req.end_date,
+            stop_loss_pct=req.stop_loss_pct,
+            trailing_stop_pct=req.trailing_stop_pct,
         )
 
         return {

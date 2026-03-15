@@ -117,6 +117,7 @@ export interface StrategyListItem {
   module: string;
   has_data_spec: boolean;
   data_date_range?: { start: string; end: string } | null;
+  has_funding_rates?: boolean;
   last_modified?: string | null;
 }
 

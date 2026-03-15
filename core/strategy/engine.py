@@ -27,7 +27,7 @@ from core.strategy.data import (
     _serialise_value,
 )
 from core.strategy.position import (
-    Position, Trade, Signal, CostModel, Side, PositionStatus,
+    Position, Trade, Signal, CostModel, FundingSchedule, Side, PositionStatus,
     DEFAULT_COSTS,
 )
 
@@ -181,6 +181,9 @@ class BacktestEngine:
         # Date range filter ("YYYY-MM" strings, inclusive)
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        # Risk management overrides (applied by engine, override strategy signals)
+        stop_loss_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
     ) -> BacktestResult:
         """
         Run a backtest.
@@ -190,6 +193,8 @@ class BacktestEngine:
             capital: Starting capital
             costs: Cost model (default: DEFAULT_COSTS)
             start_date, end_date: "YYYY-MM" date range filter (inclusive)
+            stop_loss_pct: Fixed stop loss % from entry (overrides strategy signal)
+            trailing_stop_pct: Trailing stop % from best price (overrides strategy signal)
             
         Returns:
             BacktestResult with trades, equity curve, and metrics
@@ -204,7 +209,10 @@ class BacktestEngine:
                     f"Strategy {strategy.name} does not define data_spec(). "
                     "All strategies must define data_spec() for the backtest engine."
                 )
-            return self._run_single_asset(strategy, capital, costs, start_date, end_date)
+            return self._run_single_asset(
+                strategy, capital, costs, start_date, end_date,
+                stop_loss_pct=stop_loss_pct, trailing_stop_pct=trailing_stop_pct,
+            )
         elif isinstance(strategy, MultiLeggedStrategy):
             return self._run_multi_legged(strategy, capital, costs)
         else:
@@ -221,6 +229,8 @@ class BacktestEngine:
         costs: CostModel,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        stop_loss_pct: Optional[float] = None,
+        trailing_stop_pct: Optional[float] = None,
     ) -> BacktestResult:
         """
         Run backtest for a strategy that defines data_spec().
@@ -277,13 +287,20 @@ class BacktestEngine:
         df_1m = df_1m_full.iloc[iter_start:iter_end]
         ticker = spec.ticker
         
-        # Costs: override bars_per_day for 1m bars
+        # Costs: override bars_per_day for 1m bars + load per-symbol funding schedule
         costs_1m = CostModel(
             commission_bps=costs.commission_bps,
             slippage_bps=costs.slippage_bps,
             funding_daily_bps=costs.funding_daily_bps,
             bars_per_day=1440,
         )
+        funding = FundingSchedule.for_symbol(ticker, spec.venue, spec.market)
+        costs_1m.set_funding_schedule(funding)
+        if self.verbose:
+            if funding.available:
+                print(f"Loaded funding rate schedule for {ticker}")
+            else:
+                print(f"No funding rate data for {ticker} — using flat {costs.funding_daily_bps} bps/day")
         
         # Initialize result
         result = BacktestResult(
@@ -294,6 +311,8 @@ class BacktestEngine:
                 "spec": spec.to_dict(),
                 "start_date": start_date,
                 "end_date": end_date,
+                "stop_loss_pct": stop_loss_pct,
+                "trailing_stop_pct": trailing_stop_pct,
             },
             start_time=df_1m.index[0],
             end_time=df_1m.index[-1],
@@ -334,7 +353,7 @@ class BacktestEngine:
                 trade = position.close(price, timestamp)
                 trade.bars_held = bars_held
                 trade.exit_reason = sl_reason
-                trade.costs = costs_1m.total_cost(
+                trade.costs, _, trade.funding_cost = costs_1m.cost_breakdown(
                     position.size, bars_held,
                     side=position.side, entry_time=position.entry_time, exit_time=timestamp,
                 )
@@ -369,8 +388,8 @@ class BacktestEngine:
                             entry_price=price,
                             size=size,
                             entry_reason=signal.reason,
-                            stop_loss_pct=signal.stop_loss_pct,
-                            trailing_stop_pct=signal.trailing_stop_pct,
+                            stop_loss_pct=stop_loss_pct if stop_loss_pct is not None else signal.stop_loss_pct,
+                            trailing_stop_pct=trailing_stop_pct if trailing_stop_pct is not None else signal.trailing_stop_pct,
                             best_price=price,
                             metadata={"entry_context": data.snapshot(timestamp)},
                         )
@@ -392,8 +411,8 @@ class BacktestEngine:
                             entry_price=price,
                             size=size,
                             entry_reason=signal.reason,
-                            stop_loss_pct=signal.stop_loss_pct,
-                            trailing_stop_pct=signal.trailing_stop_pct,
+                            stop_loss_pct=stop_loss_pct if stop_loss_pct is not None else signal.stop_loss_pct,
+                            trailing_stop_pct=trailing_stop_pct if trailing_stop_pct is not None else signal.trailing_stop_pct,
                             best_price=price,
                             metadata={"entry_context": data.snapshot(timestamp)},
                         )
@@ -404,7 +423,7 @@ class BacktestEngine:
                     trade = position.close(price, timestamp)
                     trade.bars_held = bars_held
                     trade.exit_reason = signal.reason
-                    trade.costs = costs_1m.total_cost(
+                    trade.costs, _, trade.funding_cost = costs_1m.cost_breakdown(
                         position.size, bars_held,
                         side=position.side, entry_time=position.entry_time, exit_time=timestamp,
                     )
@@ -446,7 +465,7 @@ class BacktestEngine:
             trade = position.close(price, df_1m.index[-1])
             trade.bars_held = bars_held
             trade.exit_reason = "end_of_data"
-            trade.costs = costs_1m.total_cost(
+            trade.costs, _, trade.funding_cost = costs_1m.cost_breakdown(
                 position.size, bars_held,
                 side=position.side, entry_time=position.entry_time, exit_time=df_1m.index[-1],
             )
@@ -508,6 +527,7 @@ class BacktestEngine:
                     "size": t.size,
                     "gross_pnl": t.gross_pnl,
                     "costs": t.costs,
+                    "funding_cost": t.funding_cost,
                     "net_pnl": t.net_pnl,
                     "bars_held": t.bars_held,
                     "entry_reason": t.entry_reason,

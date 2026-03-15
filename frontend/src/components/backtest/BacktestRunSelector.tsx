@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 import type { BacktestRun } from "@/api/backtest";
-import { ChevronRight, Search, ArrowLeft } from "lucide-react";
+import { ChevronRight, Search, ArrowLeft, Trash2 } from "lucide-react";
 
 interface Props {
   runs: BacktestRun[];
   selected: BacktestRun | null;
   onSelect: (run: BacktestRun) => void;
+  onDelete?: (run: BacktestRun) => void;
 }
 
 /** Parse run_id like "20260315_141351" → formatted timestamp */
@@ -75,7 +76,7 @@ export function BacktestRunBar({
 
 // ── Full-page run selector panel ──
 
-export default function BacktestRunSelector({ runs, selected, onSelect }: Props) {
+export default function BacktestRunSelector({ runs, selected, onSelect, onDelete }: Props) {
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     // Auto-expand all groups initially
@@ -182,7 +183,7 @@ export default function BacktestRunSelector({ runs, selected, onSelect }: Props)
                           <button
                             key={run.run_id}
                             onClick={() => onSelect(run)}
-                            className={`flex w-full items-center gap-4 px-4 py-2.5 pl-11 text-left transition ${
+                            className={`group flex w-full items-center gap-4 px-4 py-2.5 pl-11 text-left transition ${
                               isActive
                                 ? "bg-blue-900/20 text-blue-300"
                                 : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"
@@ -218,6 +219,16 @@ export default function BacktestRunSelector({ runs, selected, onSelect }: Props)
                               >
                                 {retPct >= 0 ? "+" : ""}{retPct.toFixed(2)}%
                               </span>
+                            )}
+
+                            {onDelete && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onDelete(run); }}
+                                className="rounded p-1 text-gray-600 hover:bg-red-900/30 hover:text-red-400 transition opacity-0 group-hover:opacity-100"
+                                title="Delete run"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             )}
                           </button>
                         );

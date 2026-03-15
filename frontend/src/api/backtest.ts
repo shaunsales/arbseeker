@@ -1,4 +1,4 @@
-import { get, post } from "./client";
+import { get, post, del } from "./client";
 
 export interface BacktestRun {
   strategy_name: string;
@@ -17,6 +17,9 @@ export interface BacktestViewData {
     price?: { time: number; value: number }[];
     equity?: { time: number; value: number }[];
     drawdown?: { time: number; value: number }[];
+    max_drawdown?: { time: number; value: number }[];
+    daily_nav?: { time: number; value: number }[];
+    daily_mdd?: { time: number; value: number }[];
     markers?: {
       time: number;
       position: string;
@@ -35,6 +38,8 @@ export interface BacktestViewData {
     size: number;
     gross_pnl: number;
     costs: number;
+    fees: number;
+    funding_cost: number;
     net_pnl: number;
     bars_held: number;
     entry_reason: string;
@@ -51,6 +56,7 @@ export interface BacktestViewData {
     render: Record<string, unknown>;
     series: { time: number; value: number }[];
   }[];
+  funding_rates?: { month: string; rate_bps: number }[] | null;
   tearsheet_exists: boolean;
   error?: string;
 }
@@ -75,6 +81,13 @@ export function viewBacktest(
   return get(`/backtest/view/${strategyName}/${runId}`);
 }
 
+export function deleteBacktest(
+  strategyName: string,
+  runId: string,
+): Promise<{ success: boolean; deleted: string[] }> {
+  return del(`/backtest/delete/${strategyName}/${runId}`);
+}
+
 export function runBacktest(req: {
   class_name: string;
   capital?: number;
@@ -83,6 +96,8 @@ export function runBacktest(req: {
   funding_daily_bps?: number;
   start_date?: string; // "YYYY-MM"
   end_date?: string;   // "YYYY-MM"
+  stop_loss_pct?: number | null;        // Fixed SL % from entry (null = use strategy default)
+  trailing_stop_pct?: number | null;    // TSL % from best price (null = use strategy default)
 }): Promise<{
   success: boolean;
   strategy_name?: string;

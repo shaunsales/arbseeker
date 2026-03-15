@@ -71,7 +71,7 @@ const METRIC_DISPLAY: {
 ];
 
 export default function BacktestViewer({ data }: Props) {
-  const [tab, setTab] = useState<"charts" | "trades">("charts");
+  const [tab, setTab] = useState<"performance" | "analysis" | "trades">("performance");
   const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
   const metrics = (data.meta as Record<string, unknown>).metrics as
     | Record<string, unknown>
@@ -80,7 +80,7 @@ export default function BacktestViewer({ data }: Props) {
 
   const handleTradeSelect = (idx: number) => {
     setSelectedTradeIdx(idx);
-    setTab("charts");
+    setTab("analysis");
   };
 
   return (
@@ -110,7 +110,148 @@ export default function BacktestViewer({ data }: Props) {
         )}
       </div>
 
-      {/* Metrics */}
+      {/* Tabs */}
+      <div className="flex border-b border-gray-800">
+        {(["performance", "analysis", "trades"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`border-b-2 px-3 py-1.5 text-xs font-medium transition ${
+              tab === t
+                ? "border-blue-500 text-blue-400"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            {t === "performance"
+              ? "Performance"
+              : t === "analysis"
+              ? "Analysis"
+              : `Trades (${data.trades.length})`}
+          </button>
+        ))}
+      </div>
+
+      {tab === "performance" && (
+        <PerformanceTab
+          data={data}
+          metrics={metrics}
+        />
+      )}
+
+      {tab === "analysis" && (
+        <>
+          {data.trades.length > 0 && (
+            <TradeNavigator
+              trades={data.trades}
+              selectedIdx={selectedTradeIdx}
+              onSelect={handleTradeSelect}
+            />
+          )}
+          <BacktestCharts
+            chartData={data.chart_data}
+            indicators={data.indicators ?? []}
+            trades={data.trades}
+            selectedTradeIdx={selectedTradeIdx}
+          />
+        </>
+      )}
+
+      {tab === "trades" && (
+        <TradesTable
+          trades={data.trades}
+          selectedTradeIdx={selectedTradeIdx}
+          onTradeSelect={handleTradeSelect}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Performance Tab ──
+
+function PerformanceTab({
+  data,
+  metrics,
+}: {
+  data: BacktestViewData;
+  metrics?: Record<string, unknown>;
+}) {
+  const config = data.meta?.config as Record<string, unknown> | undefined;
+  const costs = config?.costs as { commission_bps?: number; slippage_bps?: number; funding_daily_bps?: number } | undefined;
+  const spec = config?.spec as { venue?: string; market?: string; ticker?: string; intervals?: Record<string, unknown[]> } | undefined;
+  const hasDynamicFunding = data.funding_rates != null && data.funding_rates.length > 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Run Configuration */}
+      {config && (
+        <div className="rounded border border-gray-800 bg-gray-900 p-3">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Run Configuration</p>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-[12px] sm:grid-cols-3 lg:grid-cols-4">
+            {spec?.ticker && (
+              <div><span className="text-gray-500">Symbol:</span> <span className="font-medium text-gray-200">{spec.ticker}</span></div>
+            )}
+            {spec?.venue && (
+              <div><span className="text-gray-500">Venue:</span> <span className="font-medium text-gray-200">{spec.venue} {spec.market}</span></div>
+            )}
+            {config.capital != null && (
+              <div><span className="text-gray-500">Capital:</span> <span className="font-medium text-gray-200">${Number(config.capital).toLocaleString()}</span></div>
+            )}
+            {config.start_date != null && config.end_date != null && (
+              <div><span className="text-gray-500">Period:</span> <span className="font-medium text-gray-200">{String(config.start_date)} → {String(config.end_date)}</span></div>
+            )}
+            {costs?.commission_bps != null && (
+              <div><span className="text-gray-500">Commission:</span> <span className="font-medium text-gray-200">{costs.commission_bps} bps</span></div>
+            )}
+            {costs?.slippage_bps != null && (
+              <div><span className="text-gray-500">Slippage:</span> <span className="font-medium text-gray-200">{costs.slippage_bps} bps</span></div>
+            )}
+            <div>
+              <span className="text-gray-500">Funding:</span>{" "}
+              {hasDynamicFunding ? (
+                <span className="font-medium text-amber-400">Dynamic (per-symbol schedule)</span>
+              ) : costs?.funding_daily_bps != null && costs.funding_daily_bps > 0 ? (
+                <span className="font-medium text-gray-200">{costs.funding_daily_bps} bps/day (flat)</span>
+              ) : (
+                <span className="font-medium text-gray-500">None</span>
+              )}
+            </div>
+            <div>
+              <span className="text-gray-500">Stop Loss:</span>{" "}
+              {config.stop_loss_pct != null ? (
+                <span className="font-medium text-gray-200">{String(config.stop_loss_pct)}%</span>
+              ) : (
+                <span className="font-medium text-gray-500">Off</span>
+              )}
+            </div>
+            <div>
+              <span className="text-gray-500">Trailing Stop:</span>{" "}
+              {config.trailing_stop_pct != null ? (
+                <span className="font-medium text-gray-200">{String(config.trailing_stop_pct)}%</span>
+              ) : (
+                <span className="font-medium text-gray-500">Strategy default</span>
+              )}
+            </div>
+            {spec?.intervals && Object.entries(spec.intervals).map(([interval, inds]) => {
+              const indList = inds as [string, Record<string, unknown>][];
+              if (!indList.length) return null;
+              return (
+                <div key={interval} className="col-span-full">
+                  <span className="text-gray-500">{interval} indicators:</span>{" "}
+                  <span className="font-medium text-gray-300">
+                    {indList.map(([name, params]) => {
+                      const paramStr = Object.entries(params).map(([k, v]) => `${k}=${v}`).join(", ");
+                      return `${name.toUpperCase()}(${paramStr})`;
+                    }).join(", ")}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Metrics grid */}
       {metrics && (
         <div className="grid grid-cols-4 gap-3">
           {METRIC_DISPLAY.map(({ key, label, fmt, color }) => {
@@ -132,48 +273,141 @@ export default function BacktestViewer({ data }: Props) {
         </div>
       )}
 
-      {/* Trade navigator */}
-      {data.trades.length > 0 && (
-        <TradeNavigator
-          trades={data.trades}
-          selectedIdx={selectedTradeIdx}
-          onSelect={handleTradeSelect}
-        />
-      )}
+      {/* NAV + Max Drawdown chart */}
+      <NavDrawdownChart chartData={data.chart_data} />
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-800">
-        {(["charts", "trades"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`border-b-2 px-3 py-1.5 text-xs font-medium transition ${
-              tab === t
-                ? "border-blue-500 text-blue-400"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            {t === "charts" ? "Charts" : `Trades (${data.trades.length})`}
-          </button>
-        ))}
+      {/* Funding rate bar */}
+      {data.funding_rates && data.funding_rates.length > 0 && (
+        <FundingRateBar rates={data.funding_rates} />
+      )}
+    </div>
+  );
+}
+
+// ── NAV + Max Drawdown Chart (Performance tab) ──
+
+function NavDrawdownChart({
+  chartData,
+}: {
+  chartData: BacktestViewData["chart_data"];
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const hasDailyNav = chartData.daily_nav && chartData.daily_nav.length > 0;
+    const hasNav = hasDailyNav || (chartData.equity && chartData.equity.length > 0);
+    if (!hasNav) return;
+
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid as const, color: "#111827" },
+        textColor: "#9ca3af",
+      },
+      grid: {
+        vertLines: { color: "#1f2937" },
+        horzLines: { color: "#1f2937" },
+      },
+      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: "#374151" },
+      leftPriceScale: { borderColor: "#374151", visible: true },
+      timeScale: { borderColor: "#374151", timeVisible: true },
+      height: 260,
+      autoSize: true,
+    });
+
+    // NAV line (right scale) — prefer daily
+    const navData = (hasDailyNav ? chartData.daily_nav : chartData.equity)!;
+    const navSeries = chart.addSeries(LineSeries, {
+      color: "#3b82f6",
+      lineWidth: 2,
+      title: "NAV",
+      priceScaleId: "right",
+      lastValueVisible: true,
+      priceLineVisible: false,
+    });
+    navSeries.setData(navData as never[]);
+
+    // Rolling Max Drawdown area (left scale) — prefer daily
+    const mddData = chartData.daily_mdd ?? chartData.max_drawdown;
+    if (mddData?.length) {
+      const mddSeries = chart.addSeries(AreaSeries, {
+        lineColor: "#ef4444",
+        lineWidth: 1,
+        topColor: "rgba(239, 68, 68, 0.0)",
+        bottomColor: "rgba(239, 68, 68, 0.35)",
+        title: "Max Drawdown %",
+        priceScaleId: "left",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      mddSeries.setData(mddData as never[]);
+    }
+
+    chart.timeScale().fitContent();
+    return () => chart.remove();
+  }, [chartData]);
+
+  const hasNav = (chartData.daily_nav && chartData.daily_nav.length > 0) || (chartData.equity && chartData.equity.length > 0);
+  if (!hasNav) return null;
+
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-medium text-gray-500">NAV & Max Drawdown</p>
+      <div ref={containerRef} className="rounded bg-gray-900" style={{ height: 260 }} />
+    </div>
+  );
+}
+
+// ── Funding Rate Bar (compact) ──
+
+function FundingRateBar({
+  rates,
+}: {
+  rates: { month: string; rate_bps: number }[];
+}) {
+  const avg = rates.reduce((s, r) => s + r.rate_bps, 0) / rates.length;
+  const min = Math.min(...rates.map((r) => r.rate_bps));
+  const max = Math.max(...rates.map((r) => r.rate_bps));
+  const latest = rates[rates.length - 1];
+
+  // Mini sparkline bars
+  const maxAbs = Math.max(...rates.map((r) => Math.abs(r.rate_bps)), 0.01);
+
+  return (
+    <div className="rounded border border-gray-800 bg-gray-900 px-4 py-3">
+      <div className="mb-2 flex items-center gap-4">
+        <p className="text-[11px] font-medium text-gray-500">Funding Rate (bps/day)</p>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="text-gray-500">
+            Avg: <span className={`font-mono font-semibold ${avg >= 0 ? "text-amber-400" : "text-emerald-400"}`}>{avg.toFixed(2)}</span>
+          </span>
+          <span className="text-gray-500">
+            Min: <span className="font-mono text-emerald-400">{min.toFixed(2)}</span>
+          </span>
+          <span className="text-gray-500">
+            Max: <span className="font-mono text-amber-400">{max.toFixed(2)}</span>
+          </span>
+          <span className="text-gray-500">
+            Latest ({latest.month}): <span className={`font-mono font-semibold ${latest.rate_bps >= 0 ? "text-amber-400" : "text-emerald-400"}`}>{latest.rate_bps.toFixed(2)}</span>
+          </span>
+        </div>
       </div>
-
-      {tab === "charts" && (
-        <BacktestCharts
-          chartData={data.chart_data}
-          indicators={data.indicators ?? []}
-          trades={data.trades}
-          selectedTradeIdx={selectedTradeIdx}
-        />
-      )}
-
-      {tab === "trades" && (
-        <TradesTable
-          trades={data.trades}
-          selectedTradeIdx={selectedTradeIdx}
-          onTradeSelect={handleTradeSelect}
-        />
-      )}
+      {/* Mini bar chart */}
+      <div className="flex items-end gap-px" style={{ height: 32 }}>
+        {rates.map((r) => {
+          const h = Math.max(2, Math.abs(r.rate_bps) / maxAbs * 28);
+          const color = r.rate_bps >= 0 ? "bg-amber-500/60" : "bg-emerald-500/60";
+          return (
+            <div
+              key={r.month}
+              className={`flex-1 rounded-t ${color}`}
+              style={{ height: `${h}px` }}
+              title={`${r.month}: ${r.rate_bps.toFixed(2)} bps/day`}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -253,9 +487,15 @@ function TradeNavigator({
             </Badge>
             <span className={`font-mono text-sm font-semibold ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
               {t.net_pnl >= 0 ? "+" : ""}{t.net_pnl.toFixed(2)}
+              <span className="ml-1 text-[10px] opacity-70">
+                ({t.entry_price ? ((t.net_pnl / (t.entry_price * t.size) * 100).toFixed(2)) : "?"}%)
+              </span>
             </span>
             <span className="text-[10px] text-gray-500">
-              ({t.gross_pnl >= 0 ? "+" : ""}{t.gross_pnl.toFixed(2)} gross, {t.costs.toFixed(2)} costs)
+              ({t.gross_pnl >= 0 ? "+" : ""}{t.gross_pnl.toFixed(2)} gross, −{t.fees.toFixed(2)} fees
+              {t.funding_cost != null && t.funding_cost !== 0 && (
+                <>, −{Math.abs(t.funding_cost).toFixed(2)} funding</>
+              )})
             </span>
           </>
         )}
@@ -320,7 +560,7 @@ function BacktestCharts({
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
-  const equityRef = useRef<HTMLDivElement>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
@@ -413,6 +653,9 @@ function BacktestCharts({
       timeScale: { borderColor: "#374151", timeVisible: true },
     };
 
+    // Track series for crosshair legend
+    const namedSeries: { name: string; color: string; series: unknown; type: "candle" | "line" | "dots" }[] = [];
+
     // ── Main chart: Price (pane 0) + overlay indicators + panel indicator panes ──
     const hasOhlcv = chartData.ohlcv && chartData.ohlcv.length > 0;
     const hasPrice = chartData.price && chartData.price.length > 0;
@@ -439,6 +682,7 @@ function BacktestCharts({
           priceLineVisible: false,
         });
         priceSeries.setData(chartData.ohlcv as never[]);
+        namedSeries.push({ name: "Price", color: "#9ca3af", series: priceSeries, type: "candle" });
       } else {
         priceSeries = chart.addSeries(LineSeries, {
           color: "#9ca3af",
@@ -446,6 +690,7 @@ function BacktestCharts({
           title: "Price",
         });
         priceSeries.setData(chartData.price as never[]);
+        namedSeries.push({ name: "Price", color: "#9ca3af", series: priceSeries, type: "line" });
       }
 
       // Pane 0: Trade markers on price series
@@ -457,7 +702,7 @@ function BacktestCharts({
             position: m.position as never,
             color: m.color,
             shape: m.shape as never,
-            text: "",
+            text: m.text ?? "",
           }));
         createSeriesMarkers(priceSeries, sorted);
       }
@@ -478,11 +723,13 @@ function BacktestCharts({
             title: ind.name,
           });
           s.setData(ind.series as never[]);
+          namedSeries.push({ name: ind.name, color: dotColor, series: s, type: "dots" });
         } else {
           // Line overlay
           const color = IND_COLORS[idx % IND_COLORS.length];
           const s = chart.addSeries(LineSeries, { color, lineWidth: 1, title: ind.name, lastValueVisible: false, priceLineVisible: false });
           s.setData(ind.series as never[]);
+          namedSeries.push({ name: ind.name, color, series: s, type: "line" });
         }
       });
 
@@ -494,6 +741,7 @@ function BacktestCharts({
         const color = IND_COLORS[idx % IND_COLORS.length];
         const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name, lastValueVisible: false, priceLineVisible: false }, pane);
         s.setData(ind.series as never[]);
+        namedSeries.push({ name: ind.name, color, series: s, type: "line" });
       });
 
       // Position state histogram pane (long/short/flat, win/loss coloring)
@@ -507,6 +755,47 @@ function BacktestCharts({
         }, posPaneIdx);
         posSeries.setData(positionData as never[]);
       }
+
+      // ── Crosshair legend ──
+      chart.subscribeCrosshairMove((param) => {
+        const legend = legendRef.current;
+        if (!legend) return;
+        if (!param.time) {
+          legend.style.display = "none";
+          return;
+        }
+        legend.style.display = "flex";
+
+        // Format timestamp
+        const ts = param.time as number;
+        const d = new Date(ts * 1000);
+        const timeStr = d.toLocaleString("en-GB", {
+          year: "numeric", month: "short", day: "2-digit",
+          hour: "2-digit", minute: "2-digit",
+          hour12: false,
+        });
+
+        let html = `<span style="color:#9ca3af;margin-right:12px">${timeStr}</span>`;
+
+        for (const ns of namedSeries) {
+          const data = param.seriesData.get(ns.series as never);
+          if (!data) continue;
+          const rec = data as unknown as Record<string, unknown>;
+          if (ns.type === "candle" && "close" in rec) {
+            const o = (rec.open as number)?.toFixed(2);
+            const h = (rec.high as number)?.toFixed(2);
+            const l = (rec.low as number)?.toFixed(2);
+            const c = (rec.close as number)?.toFixed(2);
+            html += `<span style="color:${ns.color};margin-right:8px">O <b>${o}</b> H <b>${h}</b> L <b>${l}</b> C <b>${c}</b></span>`;
+          } else if ("value" in rec) {
+            const v = rec.value as number;
+            if (v != null && !isNaN(v)) {
+              html += `<span style="color:${ns.color};margin-right:8px">${ns.name}: <b>${v.toFixed(4)}</b></span>`;
+            }
+          }
+        }
+        legend.innerHTML = html;
+      });
 
       chart.timeScale().fitContent();
     }
@@ -528,43 +817,6 @@ function BacktestCharts({
       });
       volSeries.setData(chartData.volume as never[]);
       volChart.timeScale().fitContent();
-    }
-
-    // ── Equity / Drawdown chart (separate, synced) ──
-    if (equityRef.current && chartData.equity?.length) {
-      const eqChart = createChart(equityRef.current, {
-        ...chartOptions,
-        height: 200,
-        autoSize: true,
-        rightPriceScale: { borderColor: "#374151" },
-        leftPriceScale: { borderColor: "#374151", visible: true },
-      });
-      chartsRef.current.push(eqChart);
-
-      const eqSeries = eqChart.addSeries(LineSeries, {
-        color: "#3b82f6",
-        lineWidth: 2,
-        title: "Equity",
-        priceScaleId: "right",
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-      eqSeries.setData(chartData.equity as never[]);
-
-      if (chartData.drawdown?.length) {
-        const ddSeries = eqChart.addSeries(AreaSeries, {
-          lineColor: "#ef4444",
-          lineWidth: 1,
-          topColor: "rgba(239, 68, 68, 0.0)",
-          bottomColor: "rgba(239, 68, 68, 0.3)",
-          title: "Drawdown %",
-          priceScaleId: "left",
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-        ddSeries.setData(chartData.drawdown as never[]);
-      }
-      eqChart.timeScale().fitContent();
     }
 
     // ── Sync all charts ──
@@ -640,13 +892,20 @@ function BacktestCharts({
         </div>
       )}
 
-      <div ref={mainRef} className="rounded bg-gray-900" style={{ height: mainChartHeight }} />
+      {/* Crosshair legend overlay */}
+      <div className="relative">
+        <div
+          ref={legendRef}
+          className="pointer-events-none absolute left-2 top-1 z-10 flex flex-wrap gap-x-1 gap-y-0 rounded bg-gray-900/80 px-2 py-1 text-[11px] font-mono backdrop-blur-sm"
+          style={{ display: "none" }}
+        />
+        <div ref={mainRef} className="rounded bg-gray-900" style={{ height: mainChartHeight }} />
+      </div>
 
       {chartData.volume && chartData.volume.length > 0 && (
         <div ref={volumeRef} className="rounded bg-gray-900" style={{ height: 80 }} />
       )}
 
-      <div ref={equityRef} className="rounded bg-gray-900" />
     </div>
   );
 }

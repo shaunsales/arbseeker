@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { listBacktests, viewBacktest, type BacktestRun } from "@/api/backtest";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { listBacktests, viewBacktest, deleteBacktest, type BacktestRun } from "@/api/backtest";
 import { Skeleton } from "@/components/ui/skeleton";
 import BacktestViewer from "@/components/backtest/BacktestViewer";
 import BacktestRunSelector, { BacktestRunBar } from "@/components/backtest/BacktestRunSelector";
 
 export default function BacktestPage() {
+  const queryClient = useQueryClient();
   const [selectedRun, setSelectedRun] = useState<BacktestRun | null>(null);
   const [showSelector, setShowSelector] = useState(true);
 
@@ -48,6 +49,16 @@ export default function BacktestPage() {
         runs={runs}
         selected={selectedRun}
         onSelect={handleSelectRun}
+        onDelete={async (run) => {
+          if (!window.confirm(`Delete run ${run.run_id} for ${run.strategy_name}?`)) return;
+          try {
+            await deleteBacktest(run.strategy_name, run.run_id);
+            if (selectedRun?.run_id === run.run_id) setSelectedRun(null);
+            queryClient.invalidateQueries({ queryKey: ["backtest-runs"] });
+          } catch (e) {
+            console.error("Delete failed", e);
+          }
+        }}
       />
     );
   }

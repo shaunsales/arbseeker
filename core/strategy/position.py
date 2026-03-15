@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 from enum import Enum
-from pathlib import Path
-import json
 import uuid
 
 
@@ -182,6 +180,7 @@ class Trade:
     size: float = 0.0
     gross_pnl: float = 0.0
     costs: float = 0.0
+    funding_cost: float = 0.0  # Funding component of costs (direction-aware)
     net_pnl: float = 0.0
     
     # Metadata
@@ -254,32 +253,51 @@ class Signal:
 
 class FundingSchedule:
     """
-    Direction-aware funding rate schedule loaded from historical data.
+    Direction-aware funding rate schedule loaded from per-symbol Parquet data.
     
     Positive rate = longs pay, shorts receive.
     Negative rate = shorts pay, longs receive.
     
-    Uses monthly median rates from static JSON data.
+    Uses monthly median rates stored at data/binance/futures/{SYMBOL}/funding.parquet.
     """
     
-    _DATA_FILE = Path(__file__).parent.parent / "data" / "funding_rates_btcusdt.json"
-    _instance: Optional["FundingSchedule"] = None
+    _cache: dict[str, "FundingSchedule"] = {}
     
-    def __init__(self, data_path: Optional[Path] = None):
-        path = data_path or self._DATA_FILE
-        if not path.exists():
-            self._months: dict[str, dict] = {}
-            return
-        with open(path) as f:
-            raw = json.load(f)
-        self._months = raw.get("months", {})
+    def __init__(self, rates: Optional[dict[str, float]] = None):
+        """
+        Args:
+            rates: Dict mapping "YYYY-MM" to median_daily_bps. None = no data.
+        """
+        self._rates: dict[str, float] = rates or {}
     
     @classmethod
-    def default(cls) -> "FundingSchedule":
-        """Singleton access to the default BTCUSDT funding schedule."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def for_symbol(cls, ticker: str, venue: str = "binance", market: str = "futures") -> "FundingSchedule":
+        """
+        Load (or return cached) funding schedule for a symbol.
+        
+        Reads from data/{venue}/{market}/{ticker}/funding.parquet.
+        Returns an empty schedule if no data exists.
+        """
+        cache_key = f"{venue}/{market}/{ticker}"
+        if cache_key in cls._cache:
+            return cls._cache[cache_key]
+        
+        from core.data.binance import load_funding_rates
+        df = load_funding_rates(ticker, market)
+        
+        if df is not None and len(df) > 0:
+            rates = {month: row["median_daily_bps"] for month, row in df.iterrows()}
+        else:
+            rates = {}
+        
+        instance = cls(rates)
+        cls._cache[cache_key] = instance
+        return instance
+    
+    @classmethod
+    def clear_cache(cls):
+        """Clear the symbol cache (e.g. after downloading new data)."""
+        cls._cache.clear()
     
     def daily_rate_bps(self, month: str) -> Optional[float]:
         """
@@ -291,10 +309,7 @@ class FundingSchedule:
         Returns:
             Median daily rate in bps (positive = longs pay), or None if no data.
         """
-        entry = self._months.get(month)
-        if entry is None:
-            return None
-        return entry["median_daily_bps"]
+        return self._rates.get(month)
     
     def funding_cost(
         self,
@@ -346,7 +361,7 @@ class FundingSchedule:
     @property
     def available(self) -> bool:
         """Whether historical funding data is loaded."""
-        return len(self._months) > 0
+        return len(self._rates) > 0
 
 
 @dataclass
@@ -368,13 +383,15 @@ class CostModel:
     # For flat funding calculation
     bars_per_day: int = 24  # Default: hourly bars
     
-    # Historical funding schedule (loaded on first use)
+    # Historical funding schedule (set by engine based on symbol)
     _funding_schedule: Optional[FundingSchedule] = field(default=None, repr=False)
     
+    def set_funding_schedule(self, schedule: FundingSchedule) -> None:
+        """Attach a per-symbol funding schedule."""
+        self._funding_schedule = schedule
+    
     @property
-    def funding_schedule(self) -> FundingSchedule:
-        if self._funding_schedule is None:
-            self._funding_schedule = FundingSchedule.default()
+    def funding_schedule(self) -> Optional[FundingSchedule]:
         return self._funding_schedule
     
     def round_trip_cost(self, size: float) -> float:
@@ -403,7 +420,7 @@ class CostModel:
         Falls back to flat funding_daily_bps otherwise.
         """
         schedule = self.funding_schedule
-        if side is not None and entry_time is not None and exit_time is not None and schedule.available:
+        if schedule is not None and schedule.available and side is not None and entry_time is not None and exit_time is not None:
             return schedule.funding_cost(side, size, entry_time, exit_time)
         return self.holding_cost_flat(size, bars_held)
     
@@ -419,6 +436,21 @@ class CostModel:
         return self.round_trip_cost(size) + self.holding_cost(
             size, bars_held, side, entry_time, exit_time
         )
+    
+    def cost_breakdown(
+        self,
+        size: float,
+        bars_held: int,
+        side: Optional["Side"] = None,
+        entry_time: Optional[datetime] = None,
+        exit_time: Optional[datetime] = None,
+    ) -> tuple[float, float, float]:
+        """
+        Return (total_cost, round_trip_cost, funding_cost) breakdown.
+        """
+        rt = self.round_trip_cost(size)
+        fc = self.holding_cost(size, bars_held, side, entry_time, exit_time)
+        return rt + fc, rt, fc
 
 
 # Default cost models for common scenarios

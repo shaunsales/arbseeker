@@ -144,16 +144,24 @@ export default function StrategySelector({
                       {s.data_date_range.start} → {s.data_date_range.end}
                     </span>
                   )}
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      s.has_data_spec
-                        ? "bg-blue-900/30 text-blue-400"
-                        : "bg-gray-800 text-gray-500"
-                    }`}
-                  >
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${s.has_data_spec ? "bg-blue-400" : "bg-gray-600"}`} />
-                    {s.has_data_spec ? "Data ready" : "No data"}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {s.has_funding_rates && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-900/30 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        Funding
+                      </span>
+                    )}
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        s.has_data_spec
+                          ? "bg-blue-900/30 text-blue-400"
+                          : "bg-gray-800 text-gray-500"
+                      }`}
+                    >
+                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${s.has_data_spec ? "bg-blue-400" : "bg-gray-600"}`} />
+                      {s.has_data_spec ? "Data ready" : "No data"}
+                    </span>
+                  </div>
                 </button>
               );
             })}

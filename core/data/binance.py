@@ -16,7 +16,7 @@ from typing import Optional, Callable
 import requests
 import pandas as pd
 
-from core.data.storage import save_monthly, get_data_path, list_available_periods
+from core.data.storage import save_monthly, get_data_path, list_available_periods, DATA_DIR
 from core.data.validator import validate_ohlcv, fill_gaps
 from core.data.market_hours import add_market_open_always
 
@@ -214,7 +214,154 @@ def download_binance_months(
     if progress_callback:
         progress_callback(total, total, "Complete")
 
+    # Auto-download funding rates for futures symbols
+    if market == "futures" and saved_paths:
+        ensure_funding_rates(symbol, start_month, end_month)
+
     return saved_paths
+
+
+# ---------------------------------------------------------------------------
+# Funding rate downloads
+# ---------------------------------------------------------------------------
+
+def get_funding_path(ticker: str, market: str = "futures") -> Path:
+    """Return the path for a symbol's funding rate Parquet."""
+    return DATA_DIR / "binance" / market / ticker / "funding.parquet"
+
+
+def download_funding_rates(
+    symbol: str,
+    start_month: Optional[str] = None,
+    end_month: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Download funding rate history from Binance Futures API and compute monthly medians.
+    
+    Args:
+        symbol: Trading pair (e.g. 'BTCUSDT')
+        start_month: Optional earliest month 'YYYY-MM' (default: 2019-09)
+        end_month: Optional latest month 'YYYY-MM' (default: current)
+        
+    Returns:
+        DataFrame with columns: month, median_daily_bps, mean_daily_bps, positive_pct, n_records
+        Index is the month string. Returns None on failure.
+    """
+    import statistics
+    from collections import defaultdict
+    
+    url = "https://fapi.binance.com/fapi/v1/fundingRate"
+    all_rates = []
+    
+    # Start from given month or earliest available
+    if start_month:
+        sy, sm = map(int, start_month.split("-"))
+        start_time = int(datetime(sy, sm, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    else:
+        start_time = int(datetime(2019, 9, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    
+    # Paginate forward
+    for _ in range(30):  # Max ~30k records
+        params = {"symbol": symbol, "limit": 1000, "startTime": start_time}
+        try:
+            resp = requests.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            print(f"  Funding rate fetch error for {symbol}: {e}")
+            break
+        
+        if not data:
+            break
+        all_rates.extend(data)
+        if len(data) < 1000:
+            break
+        start_time = data[-1]["fundingTime"] + 1
+    
+    if not all_rates:
+        return None
+    
+    # Deduplicate and sort
+    seen = set()
+    unique = []
+    for r in all_rates:
+        if r["fundingTime"] not in seen:
+            seen.add(r["fundingTime"])
+            unique.append(r)
+    unique.sort(key=lambda x: x["fundingTime"])
+    
+    # Group by month
+    monthly: dict[str, list[float]] = defaultdict(list)
+    for r in unique:
+        dt = datetime.fromtimestamp(r["fundingTime"] / 1000, tz=timezone.utc)
+        month_key = dt.strftime("%Y-%m")
+        monthly[month_key].append(float(r["fundingRate"]))
+    
+    # Filter by end_month if specified
+    if end_month:
+        monthly = {k: v for k, v in monthly.items() if k <= end_month}
+    
+    if not monthly:
+        return None
+    
+    # Build DataFrame
+    rows = []
+    for month in sorted(monthly.keys()):
+        rates = monthly[month]
+        median_8h = statistics.median(rates)
+        mean_8h = statistics.mean(rates)
+        rows.append({
+            "month": month,
+            "median_daily_bps": round(median_8h * 3 * 10000, 2),  # 3 funding periods/day
+            "mean_daily_bps": round(mean_8h * 3 * 10000, 2),
+            "positive_pct": round(sum(1 for r in rates if r > 0) / len(rates) * 100, 1),
+            "n_records": len(rates),
+        })
+    
+    df = pd.DataFrame(rows).set_index("month")
+    return df
+
+
+def save_funding_rates(symbol: str, df: pd.DataFrame, market: str = "futures") -> Path:
+    """Save funding rate DataFrame to Parquet."""
+    path = get_funding_path(symbol, market)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, engine="pyarrow", compression="snappy")
+    return path
+
+
+def load_funding_rates(symbol: str, market: str = "futures") -> Optional[pd.DataFrame]:
+    """Load funding rate DataFrame from Parquet. Returns None if not found."""
+    path = get_funding_path(symbol, market)
+    if not path.exists():
+        return None
+    return pd.read_parquet(path)
+
+
+def ensure_funding_rates(
+    symbol: str,
+    start_month: Optional[str] = None,
+    end_month: Optional[str] = None,
+    force: bool = False,
+) -> Optional[Path]:
+    """
+    Ensure funding rate data exists for a symbol. Downloads if missing.
+    
+    Returns path to the Parquet file, or None if download failed.
+    """
+    path = get_funding_path(symbol)
+    if path.exists() and not force:
+        return path
+    
+    print(f"  Downloading funding rates for {symbol}...")
+    df = download_funding_rates(symbol, start_month, end_month)
+    if df is None or len(df) == 0:
+        print(f"  No funding rate data available for {symbol}")
+        return None
+    
+    saved = save_funding_rates(symbol, df)
+    print(f"  Saved {len(df)} months of funding rates → {saved.name}")
+    return saved
 
 
 def list_binance_symbols(market: str = "futures") -> list[str]:
