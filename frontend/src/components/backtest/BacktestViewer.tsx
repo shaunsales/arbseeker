@@ -182,6 +182,26 @@ export default function BacktestViewer({ data }: Props) {
 
 type TradeRow = BacktestViewData["trades"][number];
 
+/** Format seconds into HH:MM:SS or Xd HH:MM:SS */
+function formatDuration(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const hms = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return d > 0 ? `${d}d ${hms}` : hms;
+}
+
+/** Format ISO timestamp to readable local time */
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString("en-GB", {
+    year: "numeric", month: "short", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+}
+
 function TradeNavigator({
   trades,
   selectedIdx,
@@ -193,60 +213,89 @@ function TradeNavigator({
 }) {
   const t = selectedIdx != null ? trades[selectedIdx] : null;
 
+  // Compute held duration in seconds
+  const heldSeconds = t
+    ? (new Date(t.exit_time).getTime() - new Date(t.entry_time).getTime()) / 1000
+    : 0;
+
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2">
-      <Crosshair className="h-3.5 w-3.5 shrink-0 text-gray-500" />
-      <span className="text-[11px] text-gray-500">Trade</span>
+    <div className="rounded-lg border border-gray-800 bg-gray-900/60">
+      {/* Top row: nav controls */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Crosshair className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+        <span className="text-[11px] text-gray-500">Trade</span>
 
-      {/* Prev */}
-      <button
-        disabled={selectedIdx == null || selectedIdx <= 0}
-        onClick={() => onSelect(selectedIdx != null ? selectedIdx - 1 : 0)}
-        className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronLeft className="h-3.5 w-3.5" />
-      </button>
-
-      {/* Index */}
-      <span className="min-w-[60px] text-center text-xs font-semibold tabular-nums text-gray-300">
-        {selectedIdx != null ? `${selectedIdx + 1} / ${trades.length}` : `— / ${trades.length}`}
-      </span>
-
-      {/* Next */}
-      <button
-        disabled={selectedIdx == null ? trades.length === 0 : selectedIdx >= trades.length - 1}
-        onClick={() => onSelect(selectedIdx != null ? selectedIdx + 1 : 0)}
-        className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
-      >
-        <ChevronRight className="h-3.5 w-3.5" />
-      </button>
-
-      {/* Divider + trade info */}
-      {t && (
-        <>
-          <div className="h-4 w-px bg-gray-800" />
-          <Badge className={`text-[10px] ${t.side === "long" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}`}>
-            {t.side}
-          </Badge>
-          <span className="font-mono text-[10px] text-gray-400">
-            {t.entry_price.toFixed(2)} → {t.exit_price.toFixed(2)}
-          </span>
-          <span className={`font-mono text-xs font-semibold ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-            {t.net_pnl >= 0 ? "+" : ""}{t.net_pnl.toFixed(2)}
-          </span>
-          <span className="text-[10px] text-gray-500">{t.bars_held} bars</span>
-          <span className="text-[10px] text-gray-600">{t.entry_reason} → {t.exit_reason}</span>
-        </>
-      )}
-
-      {/* Jump to first if none selected */}
-      {selectedIdx == null && trades.length > 0 && (
         <button
-          onClick={() => onSelect(0)}
-          className="ml-1 rounded px-2 py-0.5 text-[10px] text-blue-400 hover:bg-gray-800 transition"
+          disabled={selectedIdx == null || selectedIdx <= 0}
+          onClick={() => onSelect(selectedIdx != null ? selectedIdx - 1 : 0)}
+          className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
         >
-          Jump to first →
+          <ChevronLeft className="h-3.5 w-3.5" />
         </button>
+
+        <span className="min-w-[60px] text-center text-xs font-semibold tabular-nums text-gray-300">
+          {selectedIdx != null ? `${selectedIdx + 1} / ${trades.length}` : `— / ${trades.length}`}
+        </span>
+
+        <button
+          disabled={selectedIdx == null ? trades.length === 0 : selectedIdx >= trades.length - 1}
+          onClick={() => onSelect(selectedIdx != null ? selectedIdx + 1 : 0)}
+          className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+
+        {t && (
+          <>
+            <div className="h-4 w-px bg-gray-800" />
+            <Badge className={`text-[10px] ${t.side === "long" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}`}>
+              {t.side}
+            </Badge>
+            <span className={`font-mono text-sm font-semibold ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {t.net_pnl >= 0 ? "+" : ""}{t.net_pnl.toFixed(2)}
+            </span>
+            <span className="text-[10px] text-gray-500">
+              ({t.gross_pnl >= 0 ? "+" : ""}{t.gross_pnl.toFixed(2)} gross, {t.costs.toFixed(2)} costs)
+            </span>
+          </>
+        )}
+
+        {selectedIdx == null && trades.length > 0 && (
+          <button
+            onClick={() => onSelect(0)}
+            className="ml-1 rounded px-2 py-0.5 text-[10px] text-blue-400 hover:bg-gray-800 transition"
+          >
+            Jump to first →
+          </button>
+        )}
+      </div>
+
+      {/* Detail row: timestamps, prices, duration, size */}
+      {t && (
+        <div className="grid grid-cols-[1fr_auto_1fr] gap-x-4 gap-y-0 border-t border-gray-800 px-3 py-2">
+          {/* Entry column */}
+          <div>
+            <p className="text-[10px] font-medium text-green-500">ENTRY</p>
+            <p className="font-mono text-[11px] text-gray-300">{formatTimestamp(t.entry_time)}</p>
+            <p className="font-mono text-xs text-gray-200">{t.entry_price.toFixed(2)}</p>
+            <p className="text-[10px] text-gray-500">{t.entry_reason}</p>
+          </div>
+
+          {/* Center: duration + size */}
+          <div className="flex flex-col items-center justify-center gap-0.5 px-4">
+            <span className="font-mono text-xs font-semibold text-gray-300">{formatDuration(heldSeconds)}</span>
+            <span className="text-[10px] text-gray-500">{t.bars_held} bars</span>
+            <span className="text-[10px] text-gray-400">Size: {t.size}</span>
+          </div>
+
+          {/* Exit column */}
+          <div className="text-right">
+            <p className="text-[10px] font-medium text-red-500">EXIT</p>
+            <p className="font-mono text-[11px] text-gray-300">{formatTimestamp(t.exit_time)}</p>
+            <p className="font-mono text-xs text-gray-200">{t.exit_price.toFixed(2)}</p>
+            <p className="text-[10px] text-gray-500">{t.exit_reason}</p>
+          </div>
+        </div>
       )}
     </div>
   );
