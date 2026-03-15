@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { listBacktests, viewBacktest, type BacktestRun } from "@/api/backtest";
 import { Skeleton } from "@/components/ui/skeleton";
 import BacktestViewer from "@/components/backtest/BacktestViewer";
-import BacktestRunSelector from "@/components/backtest/BacktestRunSelector";
+import BacktestRunSelector, { BacktestRunBar } from "@/components/backtest/BacktestRunSelector";
 
 export default function BacktestPage() {
   const [selectedRun, setSelectedRun] = useState<BacktestRun | null>(null);
+  const [showSelector, setShowSelector] = useState(true);
 
   const { data, isLoading } = useQuery({
     queryKey: ["backtest-runs"],
@@ -26,30 +27,41 @@ export default function BacktestPage() {
 
   const runs = data?.runs ?? [];
 
+  const handleSelectRun = (run: BacktestRun) => {
+    setSelectedRun(run);
+    setShowSelector(false);
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Skeleton className="h-8 w-80" />
+      </div>
+    );
+  }
+
+  // State 1: Full-page selector panel
+  if (showSelector || !selectedRun) {
+    return (
+      <BacktestRunSelector
+        runs={runs}
+        selected={selectedRun}
+        onSelect={handleSelectRun}
+      />
+    );
+  }
+
+  // State 2: Compact bar + viewer
   return (
     <div className="flex h-full flex-col">
-      {/* Top bar: grouped run selector */}
-      <div className="flex items-center gap-3 border-b border-gray-800 px-4 py-2">
-        {isLoading ? (
-          <Skeleton className="h-8 w-80" />
-        ) : (
-          <BacktestRunSelector
-            runs={runs}
-            selected={selectedRun}
-            onSelect={setSelectedRun}
-          />
-        )}
-      </div>
+      <BacktestRunBar
+        selected={selectedRun}
+        onChangeRun={() => setShowSelector(true)}
+      />
 
-      {/* Main content — full width */}
       <div className="flex-1 overflow-y-auto p-4">
-        {!selectedRun ? (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-sm text-gray-500">
-              Select a backtest run to view results
-            </p>
-          </div>
-        ) : viewLoading ? (
+        {viewLoading ? (
           <div className="flex h-60 items-center justify-center text-sm text-gray-500">
             Loading backtest results…
           </div>
