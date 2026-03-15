@@ -57,7 +57,12 @@ export interface BacktestViewData {
 
 export function listBacktests(): Promise<{
   runs: BacktestRun[];
-  strategies: { class_name: string; module: string; has_data_spec: boolean }[];
+  strategies: {
+    class_name: string;
+    module: string;
+    has_data_spec: boolean;
+    data_date_range?: { start: string; end: string } | null;
+  }[];
 }> {
   return get("/backtest/");
 }

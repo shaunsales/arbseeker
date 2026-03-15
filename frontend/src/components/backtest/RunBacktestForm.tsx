@@ -16,6 +16,7 @@ interface Strategy {
   class_name: string;
   module: string;
   has_data_spec: boolean;
+  data_date_range?: { start: string; end: string } | null;
 }
 
 interface Props {
@@ -38,6 +39,23 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
   const [error, setError] = useState("");
 
   const eligible = strategies.filter((s) => s.has_data_spec);
+
+  // Get the selected strategy's data date range
+  const selectedStrategy = eligible.find((s) => s.class_name === className);
+  const dateRange = selectedStrategy?.data_date_range ?? null;
+
+  // When strategy changes, auto-populate dates from available data range
+  const handleStrategyChange = (name: string) => {
+    setClassName(name);
+    const strat = eligible.find((s) => s.class_name === name);
+    if (strat?.data_date_range) {
+      setStartDate(strat.data_date_range.start);
+      setEndDate(strat.data_date_range.end);
+    } else {
+      setStartDate("");
+      setEndDate("");
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: runBacktest,
@@ -77,7 +95,7 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
       {/* Strategy select */}
       <div>
         <label className="mb-1 block text-[11px] text-gray-500">Strategy</label>
-        <Select value={className} onValueChange={setClassName}>
+        <Select value={className} onValueChange={handleStrategyChange}>
           <SelectTrigger className="h-8 text-xs">
             <SelectValue placeholder="Select strategy…" />
           </SelectTrigger>
@@ -109,7 +127,14 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
 
       {/* Date range */}
       <div>
-        <label className="mb-1 block text-[11px] text-gray-500">Date Range (optional)</label>
+        <label className="mb-1 block text-[11px] text-gray-500">
+          Date Range
+          {dateRange && (
+            <span className="ml-1 font-normal text-gray-600">
+              (data: {dateRange.start} → {dateRange.end})
+            </span>
+          )}
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <span className="text-[10px] text-gray-600">Start month</span>
@@ -117,6 +142,8 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
               type="month"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
+              min={dateRange?.start}
+              max={dateRange?.end}
               className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
@@ -126,11 +153,15 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
               type="month"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
+              min={dateRange?.start}
+              max={dateRange?.end}
               className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
         </div>
-        <p className="mt-0.5 text-[10px] text-gray-600">Leave blank to use all available data</p>
+        {!dateRange && className && (
+          <p className="mt-0.5 text-[10px] text-yellow-500">No built data found — build data first</p>
+        )}
       </div>
 
       {/* Cost model — compact row */}

@@ -76,12 +76,20 @@ def discover_strategies() -> list[dict]:
                 except Exception:
                     spec = None
 
+                # Load manifest to get available data date range
+                data_date_range = None
+                if spec is not None:
+                    manifest = load_manifest(attr_name)
+                    if manifest and "date_range" in manifest:
+                        data_date_range = manifest["date_range"]
+
                 results.append({
                     "class_name": attr_name,
                     "module": f"strategies.{modname}",
                     "name": instance.name if 'instance' in dir() else attr_name,
                     "has_data_spec": spec is not None,
                     "spec": spec,
+                    "data_date_range": data_date_range,
                 })
 
     return results
