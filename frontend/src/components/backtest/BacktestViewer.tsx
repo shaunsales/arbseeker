@@ -12,7 +12,7 @@ import {
 import { DotsSeries } from "@/plugins/dots-series";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronLeft, Crosshair } from "lucide-react";
 
 interface Props {
   data: BacktestViewData;
@@ -72,10 +72,16 @@ const METRIC_DISPLAY: {
 
 export default function BacktestViewer({ data }: Props) {
   const [tab, setTab] = useState<"charts" | "trades">("charts");
+  const [selectedTradeIdx, setSelectedTradeIdx] = useState<number | null>(null);
   const metrics = (data.meta as Record<string, unknown>).metrics as
     | Record<string, unknown>
     | undefined;
   const period = metrics?.period as string | undefined;
+
+  const handleTradeSelect = (idx: number) => {
+    setSelectedTradeIdx(idx);
+    setTab("charts");
+  };
 
   return (
     <div className="space-y-4">
@@ -126,6 +132,15 @@ export default function BacktestViewer({ data }: Props) {
         </div>
       )}
 
+      {/* Trade navigator */}
+      {data.trades.length > 0 && (
+        <TradeNavigator
+          trades={data.trades}
+          selectedIdx={selectedTradeIdx}
+          onSelect={handleTradeSelect}
+        />
+      )}
+
       {/* Tabs */}
       <div className="flex border-b border-gray-800">
         {(["charts", "trades"] as const).map((t) => (
@@ -143,9 +158,96 @@ export default function BacktestViewer({ data }: Props) {
         ))}
       </div>
 
-      {tab === "charts" && <BacktestCharts chartData={data.chart_data} indicators={data.indicators ?? []} />}
+      {tab === "charts" && (
+        <BacktestCharts
+          chartData={data.chart_data}
+          indicators={data.indicators ?? []}
+          trades={data.trades}
+          selectedTradeIdx={selectedTradeIdx}
+        />
+      )}
 
-      {tab === "trades" && <TradesTable trades={data.trades} />}
+      {tab === "trades" && (
+        <TradesTable
+          trades={data.trades}
+          selectedTradeIdx={selectedTradeIdx}
+          onTradeSelect={handleTradeSelect}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Trade Navigator ──
+
+type TradeRow = BacktestViewData["trades"][number];
+
+function TradeNavigator({
+  trades,
+  selectedIdx,
+  onSelect,
+}: {
+  trades: TradeRow[];
+  selectedIdx: number | null;
+  onSelect: (idx: number) => void;
+}) {
+  const t = selectedIdx != null ? trades[selectedIdx] : null;
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/60 px-3 py-2">
+      <Crosshair className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+      <span className="text-[11px] text-gray-500">Trade</span>
+
+      {/* Prev */}
+      <button
+        disabled={selectedIdx == null || selectedIdx <= 0}
+        onClick={() => onSelect(selectedIdx != null ? selectedIdx - 1 : 0)}
+        className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+
+      {/* Index */}
+      <span className="min-w-[60px] text-center text-xs font-semibold tabular-nums text-gray-300">
+        {selectedIdx != null ? `${selectedIdx + 1} / ${trades.length}` : `— / ${trades.length}`}
+      </span>
+
+      {/* Next */}
+      <button
+        disabled={selectedIdx == null ? trades.length === 0 : selectedIdx >= trades.length - 1}
+        onClick={() => onSelect(selectedIdx != null ? selectedIdx + 1 : 0)}
+        className="rounded p-0.5 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+
+      {/* Divider + trade info */}
+      {t && (
+        <>
+          <div className="h-4 w-px bg-gray-800" />
+          <Badge className={`text-[10px] ${t.side === "long" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}`}>
+            {t.side}
+          </Badge>
+          <span className="font-mono text-[10px] text-gray-400">
+            {t.entry_price.toFixed(2)} → {t.exit_price.toFixed(2)}
+          </span>
+          <span className={`font-mono text-xs font-semibold ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
+            {t.net_pnl >= 0 ? "+" : ""}{t.net_pnl.toFixed(2)}
+          </span>
+          <span className="text-[10px] text-gray-500">{t.bars_held} bars</span>
+          <span className="text-[10px] text-gray-600">{t.entry_reason} → {t.exit_reason}</span>
+        </>
+      )}
+
+      {/* Jump to first if none selected */}
+      {selectedIdx == null && trades.length > 0 && (
+        <button
+          onClick={() => onSelect(0)}
+          className="ml-1 rounded px-2 py-0.5 text-[10px] text-blue-400 hover:bg-gray-800 transition"
+        >
+          Jump to first →
+        </button>
+      )}
     </div>
   );
 }
@@ -159,9 +261,13 @@ const IND_COLORS = ["#38bdf8", "#fb923c", "#a78bfa", "#4ade80", "#f472b6"];
 function BacktestCharts({
   chartData,
   indicators,
+  trades,
+  selectedTradeIdx,
 }: {
   chartData: BacktestViewData["chart_data"];
   indicators: IndicatorSeries[];
+  trades: TradeRow[];
+  selectedTradeIdx: number | null;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
@@ -201,9 +307,32 @@ function BacktestCharts({
     return items;
   }, [overlayIndicators, panelIndicators]);
 
-  // Compute main chart height: base + pane per visible panel indicator
+  // Generate position state data from trades (for overlay histogram)
+  const positionData = useMemo(() => {
+    if (!trades.length || !chartData.ohlcv?.length) return [];
+    const tradeTimestamps = trades.map((t) => ({
+      entry: Math.floor(new Date(t.entry_time).getTime() / 1000),
+      exit: Math.floor(new Date(t.exit_time).getTime() / 1000),
+      side: t.side,
+      win: t.net_pnl >= 0,
+    }));
+    return chartData.ohlcv.map((bar) => {
+      const active = tradeTimestamps.find(
+        (tt) => bar.time >= tt.entry && bar.time <= tt.exit,
+      );
+      if (!active) return { time: bar.time, value: 0, color: "transparent" };
+      const val = active.side === "long" ? 1 : -1;
+      const color = active.win
+        ? "rgba(34, 197, 94, 0.5)"
+        : "rgba(239, 68, 68, 0.5)";
+      return { time: bar.time, value: val, color };
+    });
+  }, [trades, chartData.ohlcv]);
+
+  // Compute main chart height: base + pane per visible panel indicator + position pane
   const visiblePanels = panelIndicators.filter((ind) => !hidden.has(ind.name));
-  const mainChartHeight = 300 + visiblePanels.length * 120;
+  const hasPositionPane = positionData.length > 0;
+  const mainChartHeight = 300 + visiblePanels.length * 120 + (hasPositionPane ? 60 : 0);
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -304,6 +433,18 @@ function BacktestCharts({
         s.setData(ind.series as never[]);
       });
 
+      // Position state histogram pane (long/short/flat, win/loss coloring)
+      if (positionData.length > 0) {
+        const posPaneIdx = nextPane++;
+        const posSeries = chart.addSeries(HistogramSeries, {
+          title: "Position",
+          priceFormat: { type: "custom", formatter: (v: number) => (v > 0 ? "LONG" : v < 0 ? "SHORT" : "FLAT") },
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }, posPaneIdx);
+        posSeries.setData(positionData as never[]);
+      }
+
       chart.timeScale().fitContent();
     }
 
@@ -381,7 +522,26 @@ function BacktestCharts({
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight]);
+  }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight, positionData]);
+
+  // ── Zoom to selected trade ──
+  useEffect(() => {
+    if (selectedTradeIdx == null || !trades[selectedTradeIdx]) return;
+    const t = trades[selectedTradeIdx];
+    const entryTs = Math.floor(new Date(t.entry_time).getTime() / 1000);
+    const exitTs = Math.floor(new Date(t.exit_time).getTime() / 1000);
+    const duration = exitTs - entryTs;
+    const padding = Math.max(duration * 0.5, 3600); // at least 1h padding
+    const from = entryTs - padding;
+    const to = exitTs + padding;
+
+    chartsRef.current.forEach((chart) => {
+      chart.timeScale().setVisibleRange({
+        from: from as never,
+        to: to as never,
+      });
+    });
+  }, [selectedTradeIdx, trades]);
 
   return (
     <div className="space-y-1">
@@ -424,9 +584,15 @@ function BacktestCharts({
 
 // ── Trades Table with expandable rows (Trade Inspector) ──
 
-type TradeRow = BacktestViewData["trades"][number];
-
-function TradesTable({ trades }: { trades: TradeRow[] }) {
+function TradesTable({
+  trades,
+  selectedTradeIdx,
+  onTradeSelect,
+}: {
+  trades: TradeRow[];
+  selectedTradeIdx: number | null;
+  onTradeSelect: (idx: number) => void;
+}) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   return (
@@ -435,6 +601,7 @@ function TradesTable({ trades }: { trades: TradeRow[] }) {
         <thead className="bg-gray-800/50">
           <tr>
             <th className="w-6 px-1 py-1.5" />
+            <th className="w-8 px-1 py-1.5" />
             {["Side", "Entry", "Entry Price", "Exit", "Exit Price", "Size", "Net PnL", "Bars", "Reason"].map((h) => (
               <th key={h} className="px-2 py-1.5 text-left font-medium text-gray-400">{h}</th>
             ))}
@@ -443,6 +610,7 @@ function TradesTable({ trades }: { trades: TradeRow[] }) {
         <tbody className="divide-y divide-gray-800">
           {trades.map((t, i) => {
             const isExpanded = expandedIdx === i;
+            const isSelected = selectedTradeIdx === i;
             const hasContext = !!t.metadata?.entry_context || !!t.metadata?.exit_context;
             return (
               <TradeRowWithInspector
@@ -450,8 +618,10 @@ function TradesTable({ trades }: { trades: TradeRow[] }) {
                 trade={t}
                 index={i}
                 isExpanded={isExpanded}
+                isSelected={isSelected}
                 hasContext={hasContext}
                 onToggle={() => setExpandedIdx(isExpanded ? null : i)}
+                onZoom={() => onTradeSelect(i)}
               />
             );
           })}
@@ -465,25 +635,46 @@ function TradeRowWithInspector({
   trade: t,
   index,
   isExpanded,
+  isSelected,
   hasContext,
   onToggle,
+  onZoom,
 }: {
   trade: TradeRow;
   index: number;
   isExpanded: boolean;
+  isSelected: boolean;
   hasContext: boolean;
   onToggle: () => void;
+  onZoom: () => void;
 }) {
   return (
     <>
       <tr
-        className={`cursor-pointer transition ${isExpanded ? "bg-gray-800/70" : "hover:bg-gray-800/50"}`}
+        className={`cursor-pointer transition ${
+          isSelected
+            ? "bg-blue-900/20"
+            : isExpanded
+            ? "bg-gray-800/70"
+            : "hover:bg-gray-800/50"
+        }`}
         onClick={onToggle}
       >
         <td className="px-1 py-1 text-center text-gray-500">
           {hasContext ? (
             isExpanded ? <ChevronDown className="inline h-3 w-3" /> : <ChevronRight className="inline h-3 w-3" />
           ) : null}
+        </td>
+        <td className="px-1 py-1 text-center">
+          <button
+            onClick={(e) => { e.stopPropagation(); onZoom(); }}
+            className={`rounded p-0.5 transition ${
+              isSelected ? "text-blue-400" : "text-gray-600 hover:text-blue-400"
+            }`}
+            title="Zoom to trade on chart"
+          >
+            <Crosshair className="h-3 w-3" />
+          </button>
         </td>
         <td className="px-2 py-1">
           <Badge className={t.side === "long" ? "bg-green-900/50 text-green-300" : "bg-red-900/50 text-red-300"}>
@@ -503,7 +694,7 @@ function TradeRowWithInspector({
       </tr>
       {isExpanded && hasContext && (
         <tr>
-          <td colSpan={10} className="bg-gray-900/80 px-4 py-3">
+          <td colSpan={11} className="bg-gray-900/80 px-4 py-3">
             <ContextPanel metadata={t.metadata!} tradeIndex={index} />
           </td>
         </tr>
