@@ -679,6 +679,8 @@ def _indicator_column_names(name: str, params: dict) -> list[str]:
         return [f"KCL_{length}", f"KCM_{length}", f"KCU_{length}"]
     elif n == "obv":
         return ["OBV"]
+    elif n == "sobv":
+        return [f"SOBV_{params.get('length', 5)}"]
     elif n == "vwap":
         return ["VWAP"]
     elif n == "mfi":
