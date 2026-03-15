@@ -8,6 +8,7 @@ import importlib
 import inspect
 import json
 import pkgutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -83,6 +84,16 @@ def discover_strategies() -> list[dict]:
                     if manifest and "date_range" in manifest:
                         data_date_range = manifest["date_range"]
 
+                # Get last-modified time of the strategy source file
+                last_modified = None
+                try:
+                    src_file = inspect.getfile(obj)
+                    last_modified = datetime.fromtimestamp(
+                        Path(src_file).stat().st_mtime
+                    ).isoformat()
+                except Exception:
+                    pass
+
                 results.append({
                     "class_name": attr_name,
                     "module": f"strategies.{modname}",
@@ -90,6 +101,7 @@ def discover_strategies() -> list[dict]:
                     "has_data_spec": spec is not None,
                     "spec": spec,
                     "data_date_range": data_date_range,
+                    "last_modified": last_modified,
                 })
 
     return results

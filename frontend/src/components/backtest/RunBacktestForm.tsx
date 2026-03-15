@@ -3,64 +3,38 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { runBacktest } from "@/api/backtest";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import MonthRangePicker, { expandMonthRange } from "@/components/ui/month-range-picker";
-import { Play, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { Play, Loader2 } from "lucide-react";
 
-interface Strategy {
+export interface BacktestStrategy {
   class_name: string;
   module: string;
   has_data_spec: boolean;
   data_date_range?: { start: string; end: string } | null;
+  last_modified?: string | null;
 }
 
 interface Props {
-  strategies: Strategy[];
+  /** The pre-selected strategy (already chosen via selector). */
+  strategy: BacktestStrategy;
   onRunComplete?: (strategyName: string, runId: string) => void;
-  /** "popover" = compact button+dropdown (default), "page" = full inline form */
-  variant?: "popover" | "page";
 }
 
-export default function RunBacktestForm({ strategies, onRunComplete, variant = "popover" }: Props) {
+export default function RunBacktestForm({ strategy, onRunComplete }: Props) {
   const queryClient = useQueryClient();
-  const [expanded, setExpanded] = useState(variant === "page");
-  const [className, setClassName] = useState("");
   const [capital, setCapital] = useState("100000");
   const [commissionBps, setCommissionBps] = useState("3.5");
   const [slippageBps, setSlippageBps] = useState("2.0");
   const [fundingBps, setFundingBps] = useState("5.0");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
   const [error, setError] = useState("");
 
-  const eligible = strategies.filter((s) => s.has_data_spec);
-
-  // Get the selected strategy's data date range
-  const selectedStrategy = eligible.find((s) => s.class_name === className);
-  const dateRange = selectedStrategy?.data_date_range ?? null;
+  const dateRange = strategy.data_date_range ?? null;
   const availableMonths = useMemo(
     () => dateRange ? expandMonthRange(dateRange.start, dateRange.end) : [],
     [dateRange],
   );
-
-  // When strategy changes, auto-populate dates from available data range
-  const handleStrategyChange = (name: string) => {
-    setClassName(name);
-    const strat = eligible.find((s) => s.class_name === name);
-    if (strat?.data_date_range) {
-      setStartDate(strat.data_date_range.start);
-      setEndDate(strat.data_date_range.end);
-    } else {
-      setStartDate("");
-      setEndDate("");
-    }
-  };
+  const [startDate, setStartDate] = useState(dateRange?.start ?? "");
+  const [endDate, setEndDate] = useState(dateRange?.end ?? "");
 
   const mutation = useMutation({
     mutationFn: runBacktest,
@@ -79,13 +53,9 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
   });
 
   const handleRun = () => {
-    if (!className) {
-      setError("Select a strategy");
-      return;
-    }
     setError("");
     mutation.mutate({
-      class_name: className,
+      class_name: strategy.class_name,
       capital: parseFloat(capital) || 100_000,
       commission_bps: parseFloat(commissionBps) || 0,
       slippage_bps: parseFloat(slippageBps) || 0,
@@ -95,30 +65,8 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
     });
   };
 
-  const formFields = (
-    <div className="space-y-3">
-      {/* Strategy select */}
-      <div>
-        <label className="mb-1 block text-[11px] text-gray-500">Strategy</label>
-        <Select value={className} onValueChange={handleStrategyChange}>
-          <SelectTrigger className="h-8 text-xs">
-            <SelectValue placeholder="Select strategy…" />
-          </SelectTrigger>
-          <SelectContent>
-            {eligible.map((s) => (
-              <SelectItem key={s.class_name} value={s.class_name}>
-                {s.class_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {eligible.length === 0 && (
-          <p className="mt-1 text-[10px] text-yellow-500">
-            No strategies with built data found
-          </p>
-        )}
-      </div>
-
+  return (
+    <div className="space-y-4">
       {/* Capital */}
       <div>
         <label className="mb-1 block text-[11px] text-gray-500">Starting Capital ($)</label>
@@ -131,7 +79,7 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
       </div>
 
       {/* Date range */}
-      {className && availableMonths.length > 0 && (
+      {availableMonths.length > 0 ? (
         <MonthRangePicker
           months={availableMonths}
           startDate={startDate}
@@ -139,8 +87,7 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
           onRangeChange={(s, e) => { setStartDate(s); setEndDate(e); }}
           showLegend={false}
         />
-      )}
-      {className && availableMonths.length === 0 && (
+      ) : (
         <p className="text-[10px] text-yellow-500">No built data found — build data first</p>
       )}
 
@@ -167,7 +114,7 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
       {error && <p className="text-xs text-red-400">{error}</p>}
 
       {/* Run button */}
-      <Button onClick={handleRun} disabled={mutation.isPending || !className} className="h-8 w-full text-xs" size="sm">
+      <Button onClick={handleRun} disabled={mutation.isPending || !startDate || !endDate} className="h-8 w-full text-xs" size="sm">
         {mutation.isPending ? (
           <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Running…</>
         ) : (
@@ -180,28 +127,6 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
         <p className="text-xs text-green-400">
           ✓ {mutation.data.total_trades} trades — {mutation.data.strategy_name}/{mutation.data.run_id?.slice(0, 8)}
         </p>
-      )}
-    </div>
-  );
-
-  // Page variant: render form fields directly
-  if (variant === "page") {
-    return formFields;
-  }
-
-  // Popover variant: button + absolute dropdown
-  return (
-    <div className="relative">
-      <Button variant="outline" size="sm" onClick={() => setExpanded(!expanded)} className="h-8 gap-1.5 text-xs">
-        {mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-        Run Backtest
-        {expanded ? <ChevronUp className="h-3 w-3 text-gray-500" /> : <ChevronDown className="h-3 w-3 text-gray-500" />}
-      </Button>
-
-      {expanded && (
-        <div className="absolute right-0 top-10 z-50 w-80 rounded-lg border border-gray-700 bg-gray-900 p-4 shadow-xl">
-          {formFields}
-        </div>
       )}
     </div>
   );
