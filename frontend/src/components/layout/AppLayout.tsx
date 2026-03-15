@@ -89,10 +89,10 @@ function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="px-4 py-4">
-        <NavLink to="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-          <img src={antlyrLogo} alt="Antlyr" className="h-5 w-5 shrink-0" />
-          <span className="text-sm font-bold tracking-wide text-sidebar-foreground group-data-[collapsible=icon]:hidden">
+      <SidebarHeader className="px-4 py-5">
+        <NavLink to="/" className="flex items-center gap-3 group-data-[collapsible=icon]:justify-center">
+          <img src={antlyrLogo} alt="Antlyr" className="h-8 w-8 shrink-0" />
+          <span className="text-base font-bold tracking-widest uppercase text-sidebar-foreground group-data-[collapsible=icon]:hidden">
             Antlyr
           </span>
         </NavLink>

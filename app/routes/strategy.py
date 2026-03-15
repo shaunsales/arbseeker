@@ -152,6 +152,8 @@ async def strategy_list():
                 "class_name": s["class_name"],
                 "module": s["module"],
                 "has_data_spec": s["has_data_spec"],
+                "data_date_range": s.get("data_date_range"),
+                "last_modified": s.get("last_modified"),
             }
             for s in strategies
         ]
