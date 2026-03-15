@@ -488,7 +488,7 @@ function TradeNavigator({
             <span className={`font-mono text-sm font-semibold ${t.net_pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
               {t.net_pnl >= 0 ? "+" : ""}{t.net_pnl.toFixed(2)}
               <span className="ml-1 text-[10px] opacity-70">
-                ({t.entry_price ? ((t.net_pnl / (t.entry_price * t.size) * 100).toFixed(2)) : "?"}%)
+                ({t.size ? ((t.net_pnl / t.size * 100).toFixed(2)) : "?"}%)
               </span>
             </span>
             <span className="text-[10px] text-gray-500">
