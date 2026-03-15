@@ -11,7 +11,12 @@ export interface BacktestViewData {
   strategy_name: string;
   run_id: string;
   meta: Record<string, unknown>;
-  chart_data: Record<string, { time: number; value: number }[]> & {
+  chart_data: Record<string, unknown> & {
+    ohlcv?: { time: number; open: number; high: number; low: number; close: number }[];
+    volume?: { time: number; value: number; color: string }[];
+    price?: { time: number; value: number }[];
+    equity?: { time: number; value: number }[];
+    drawdown?: { time: number; value: number }[];
     markers?: {
       time: number;
       position: string;
@@ -19,6 +24,7 @@ export interface BacktestViewData {
       shape: string;
       text: string;
     }[];
+    interval?: string;
   };
   trades: {
     side: string;
@@ -41,6 +47,8 @@ export interface BacktestViewData {
   indicators: {
     name: string;
     interval: string;
+    display: string;
+    render: Record<string, unknown>;
     series: { time: number; value: number }[];
   }[];
   tearsheet_exists: boolean;

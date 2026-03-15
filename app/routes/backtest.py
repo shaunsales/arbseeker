@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from app.routes.strategy import discover_strategies, _get_strategy_instance
 from core.strategy.data import strategy_folder, STRATEGIES_OUTPUT_DIR, _indicator_column_names
+from core.indicators.indicators import INDICATOR_REGISTRY
 from core.strategy.engine import BacktestEngine
 from core.strategy.position import CostModel, DEFAULT_COSTS
 
@@ -154,6 +155,34 @@ async def view_run(strategy_name: str, run_id: str):
 
         chart_data["interval"] = interval
         chart_data["price"] = _series_to_json(bars_r.index, bars_r["close"])
+
+        # OHLCV for candlestick rendering — bars parquet may only have close,
+        # so load raw 1m data from strategy data folder and resample it.
+        ohlcv_data = []
+        volume_data = []
+        ohlcv_source = bars_r
+        has_ohlc = all(c in bars_r.columns for c in ["open", "high", "low", "close"])
+        if not has_ohlc:
+            raw_1m_path = strategy_folder(strategy_name) / "data" / "1m.parquet"
+            if raw_1m_path.exists():
+                raw_1m = pd.read_parquet(raw_1m_path, columns=["open", "high", "low", "close", "volume"])
+                ohlcv_source = _resample_bars(raw_1m, interval)
+                has_ohlc = all(c in ohlcv_source.columns for c in ["open", "high", "low", "close"])
+
+        if has_ohlc:
+            for ts, row in ohlcv_source.iterrows():
+                t = int(ts.timestamp())
+                o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+                if any(np.isnan(v) for v in [o, h, l, c]):
+                    continue
+                ohlcv_data.append({"time": t, "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
+                if "volume" in ohlcv_source.columns:
+                    vol = float(row["volume"])
+                    if not np.isnan(vol):
+                        volume_data.append({"time": t, "value": round(vol, 2), "color": "#22c55e80" if c >= o else "#ef444480"})
+        chart_data["ohlcv"] = ohlcv_data
+        chart_data["volume"] = volume_data
+
         if "nav" in bars_r.columns:
             chart_data["equity"] = _series_to_json(bars_r.index, bars_r["nav"])
         if "drawdown_pct" in bars_r.columns:
@@ -252,9 +281,22 @@ async def view_run(strategy_name: str, run_id: str):
             ind_aligned = ind_df[ind_cols].reindex(resampled_index, method="ffill")
 
             for col in ind_cols:
+                # Look up display/render metadata from the indicator registry
+                ind_display = "panel"
+                ind_render = {"type": "line"}
+                for ind_name, _params in ind_list:
+                    reg = INDICATOR_REGISTRY.get(ind_name.lower(), {})
+                    expected_cols = _indicator_column_names(ind_name, _params)
+                    if col in expected_cols:
+                        ind_display = reg.get("display", "panel")
+                        ind_render = reg.get("render", {"type": "line"})
+                        break
+
                 indicators.append({
                     "name": col,
                     "interval": src_interval,
+                    "display": ind_display,
+                    "render": ind_render,
                     "series": _series_to_json(ind_aligned.index, ind_aligned[col]),
                 })
 

@@ -4,9 +4,12 @@ import {
   createSeriesMarkers,
   type IChartApi,
   ColorType,
+  CandlestickSeries,
   LineSeries,
   AreaSeries,
+  HistogramSeries,
 } from "lightweight-charts";
+import { DotsSeries } from "@/plugins/dots-series";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ChevronDown } from "lucide-react";
@@ -160,26 +163,47 @@ function BacktestCharts({
   chartData: BacktestViewData["chart_data"];
   indicators: IndicatorSeries[];
 }) {
-  const priceRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const volumeRef = useRef<HTMLDivElement>(null);
   const equityRef = useRef<HTMLDivElement>(null);
-  const indRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const chartsRef = useRef<IChartApi[]>([]);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
-  // Group related indicators into panels (ADX+DMP+DMN, MACD+MACDh+MACDs, etc.)
-  const indGroups = useMemo(() => {
-    const groups = new Map<string, IndicatorSeries[]>();
-    for (const ind of indicators) {
-      if (!ind.series.length) continue;
-      const baseName = ind.name.replace(/_\d+$/, "");
-      const groupKey =
-        ["ADX", "DMP", "DMN"].includes(baseName) ? `${ind.interval}_ADX` :
-        ["MACD", "MACDh", "MACDs"].includes(baseName) ? `${ind.interval}_MACD` :
-        `${ind.interval}_${ind.name}`;
-      if (!groups.has(groupKey)) groups.set(groupKey, []);
-      groups.get(groupKey)!.push(ind);
-    }
-    return Array.from(groups.entries());
-  }, [indicators]);
+  const toggleVisibility = (key: string) => {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // Split indicators into overlays (rendered on price pane) and panels (separate panes)
+  const overlayIndicators = useMemo(
+    () => indicators.filter((ind) => ind.display === "overlay" && ind.series.length > 0),
+    [indicators],
+  );
+  const panelIndicators = useMemo(
+    () => indicators.filter((ind) => ind.display === "panel" && ind.series.length > 0),
+    [indicators],
+  );
+
+  // Legend items
+  const legendItems = useMemo(() => {
+    const items: { key: string; label: string; color: string }[] = [];
+    overlayIndicators.forEach((ind, i) => {
+      const color = (ind.render as { color?: string })?.color ?? IND_COLORS[i % IND_COLORS.length];
+      items.push({ key: ind.name, label: ind.name, color });
+    });
+    panelIndicators.forEach((ind, i) => {
+      items.push({ key: ind.name, label: ind.name, color: IND_COLORS[i % IND_COLORS.length] });
+    });
+    return items;
+  }, [overlayIndicators, panelIndicators]);
+
+  // Compute main chart height: base + pane per visible panel indicator
+  const visiblePanels = panelIndicators.filter((ind) => !hidden.has(ind.name));
+  const mainChartHeight = 300 + visiblePanels.length * 120;
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -196,24 +220,43 @@ function BacktestCharts({
       },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: "#374151" },
-      timeScale: { borderColor: "#374151", timeVisible: true, minBarSpacing: 0.001 },
+      timeScale: { borderColor: "#374151", timeVisible: true },
     };
 
-    // Price chart with trade markers
-    if (priceRef.current && chartData.price?.length) {
-      const chart = createChart(priceRef.current, {
+    // ── Main chart: Price (pane 0) + overlay indicators + panel indicator panes ──
+    const hasOhlcv = chartData.ohlcv && chartData.ohlcv.length > 0;
+    const hasPrice = chartData.price && chartData.price.length > 0;
+
+    if (mainRef.current && (hasOhlcv || hasPrice)) {
+      const chart = createChart(mainRef.current, {
         ...chartOptions,
-        height: 300,
+        height: mainChartHeight,
+        autoSize: true,
       });
       chartsRef.current.push(chart);
 
-      const priceSeries = chart.addSeries(LineSeries, {
-        color: "#9ca3af",
-        lineWidth: 1,
-        title: "Price",
-      });
-      priceSeries.setData(chartData.price as never[]);
+      // Pane 0: Candlestick price (prefer OHLCV, fallback to line)
+      let priceSeries;
+      if (hasOhlcv) {
+        priceSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "#22c55e",
+          downColor: "#ef4444",
+          borderDownColor: "#ef4444",
+          borderUpColor: "#22c55e",
+          wickDownColor: "#ef4444",
+          wickUpColor: "#22c55e",
+        });
+        priceSeries.setData(chartData.ohlcv as never[]);
+      } else {
+        priceSeries = chart.addSeries(LineSeries, {
+          color: "#9ca3af",
+          lineWidth: 1,
+          title: "Price",
+        });
+        priceSeries.setData(chartData.price as never[]);
+      }
 
+      // Pane 0: Trade markers on price series
       if (chartData.markers?.length) {
         const sorted = [...chartData.markers]
           .sort((a, b) => a.time - b.time)
@@ -226,42 +269,73 @@ function BacktestCharts({
           }));
         createSeriesMarkers(priceSeries, sorted);
       }
+
+      // Pane 0: Overlay indicators (PSAR dots, moving averages, etc.)
+      overlayIndicators.forEach((ind, idx) => {
+        if (hidden.has(ind.name)) return;
+        const renderType = (ind.render as { type?: string })?.type ?? "line";
+
+        if (renderType === "markers") {
+          // PSAR-style dots
+          const dotColor = (ind.render as { color?: string })?.color ?? "#f59e0b";
+          const s = chart.addCustomSeries(new DotsSeries(), {
+            dotColor,
+            radius: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            title: ind.name,
+          });
+          s.setData(ind.series as never[]);
+        } else {
+          // Line overlay
+          const color = IND_COLORS[idx % IND_COLORS.length];
+          const s = chart.addSeries(LineSeries, { color, lineWidth: 1, title: ind.name });
+          s.setData(ind.series as never[]);
+        }
+      });
+
+      // Pane 1+: Panel indicators (SOBV, RSI, etc.) — one pane each
+      let nextPane = 1;
+      panelIndicators.forEach((ind, idx) => {
+        if (hidden.has(ind.name)) return;
+        const pane = nextPane++;
+        const color = IND_COLORS[idx % IND_COLORS.length];
+        const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name }, pane);
+        s.setData(ind.series as never[]);
+      });
+
       chart.timeScale().fitContent();
     }
 
-    // Indicator panels — each group gets its own chart
-    indGroups.forEach(([groupKey, group]: [string, IndicatorSeries[]]) => {
-      const el = indRefs.current.get(groupKey);
-      if (!el) return;
-
-      const chart = createChart(el, {
+    // ── Volume chart (separate, synced) ──
+    if (volumeRef.current && chartData.volume && chartData.volume.length > 0) {
+      const volChart = createChart(volumeRef.current, {
         ...chartOptions,
-        height: 150,
+        height: 80,
+        autoSize: true,
       });
-      chartsRef.current.push(chart);
+      chartsRef.current.push(volChart);
 
-      group.forEach((ind: IndicatorSeries, idx: number) => {
-        const s = chart.addSeries(LineSeries, {
-          color: IND_COLORS[idx % IND_COLORS.length],
-          lineWidth: 1,
-          title: ind.name,
-        });
-        s.setData(ind.series as never[]);
+      const volSeries = volChart.addSeries(HistogramSeries, {
+        priceFormat: { type: "volume" },
+        priceScaleId: "",
       });
-      chart.timeScale().fitContent();
-    });
+      volSeries.setData(chartData.volume as never[]);
+      volChart.timeScale().fitContent();
+    }
 
-    // Equity + Drawdown on a single chart with dual Y-axes
+    // ── Equity / Drawdown chart (separate, synced) ──
     if (equityRef.current && chartData.equity?.length) {
-      const chart = createChart(equityRef.current, {
+      const eqChart = createChart(equityRef.current, {
         ...chartOptions,
         height: 200,
+        autoSize: true,
         rightPriceScale: { borderColor: "#374151" },
         leftPriceScale: { borderColor: "#374151", visible: true },
       });
-      chartsRef.current.push(chart);
+      chartsRef.current.push(eqChart);
 
-      const eqSeries = chart.addSeries(LineSeries, {
+      const eqSeries = eqChart.addSeries(LineSeries, {
         color: "#3b82f6",
         lineWidth: 2,
         title: "Equity",
@@ -270,7 +344,7 @@ function BacktestCharts({
       eqSeries.setData(chartData.equity as never[]);
 
       if (chartData.drawdown?.length) {
-        const ddSeries = chart.addSeries(AreaSeries, {
+        const ddSeries = eqChart.addSeries(AreaSeries, {
           lineColor: "#ef4444",
           lineWidth: 1,
           topColor: "rgba(239, 68, 68, 0.0)",
@@ -280,14 +354,12 @@ function BacktestCharts({
         });
         ddSeries.setData(chartData.drawdown as never[]);
       }
-      chart.timeScale().fitContent();
+      eqChart.timeScale().fitContent();
     }
 
-    // Sync: all series now share the same timestamps (LOCF-aligned),
-    // so simple logical-range sync with source-locking works cleanly.
+    // ── Sync all charts ──
     const charts = chartsRef.current;
     let syncSource: number | null = null;
-
     const releaseSyncSource = () => { syncSource = null; };
     window.addEventListener("mouseup", releaseSyncSource);
     window.addEventListener("touchend", releaseSyncSource);
@@ -309,26 +381,42 @@ function BacktestCharts({
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, indGroups]);
+  }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight]);
 
   return (
     <div className="space-y-1">
-      <p className="text-[11px] font-medium text-gray-500">Price + Trades</p>
-      <div ref={priceRef} className="rounded bg-gray-900" />
-
-      {indGroups.map(([groupKey, group]: [string, IndicatorSeries[]]) => (
-        <div key={groupKey}>
-          <p className="mt-2 text-[11px] font-medium text-gray-500">
-            {group.map((i: IndicatorSeries) => i.name).join(" / ")} ({group[0].interval})
-          </p>
-          <div
-            ref={(el) => { if (el) indRefs.current.set(groupKey, el); }}
-            className="rounded bg-gray-900"
-          />
+      {/* Legend / visibility toggles */}
+      {legendItems.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1 py-1.5">
+          {legendItems.map((item) => {
+            const isHidden = hidden.has(item.key);
+            return (
+              <button
+                key={item.key}
+                onClick={() => toggleVisibility(item.key)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-all ${
+                  isHidden
+                    ? "bg-gray-800/40 text-gray-600 line-through"
+                    : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                }`}
+              >
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ backgroundColor: isHidden ? "#4b5563" : item.color }}
+                />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
-      ))}
+      )}
 
-      <p className="mt-2 text-[11px] font-medium text-gray-500">Equity / Drawdown</p>
+      <div ref={mainRef} className="rounded bg-gray-900" style={{ height: mainChartHeight }} />
+
+      {chartData.volume && chartData.volume.length > 0 && (
+        <div ref={volumeRef} className="rounded bg-gray-900" style={{ height: 80 }} />
+      )}
+
       <div ref={equityRef} className="rounded bg-gray-900" />
     </div>
   );
