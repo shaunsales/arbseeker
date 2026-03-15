@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { runBacktest } from "@/api/backtest";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import MonthRangePicker, { expandMonthRange } from "@/components/ui/month-range-picker";
 import { Play, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 
 interface Strategy {
@@ -43,6 +44,10 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
   // Get the selected strategy's data date range
   const selectedStrategy = eligible.find((s) => s.class_name === className);
   const dateRange = selectedStrategy?.data_date_range ?? null;
+  const availableMonths = useMemo(
+    () => dateRange ? expandMonthRange(dateRange.start, dateRange.end) : [],
+    [dateRange],
+  );
 
   // When strategy changes, auto-populate dates from available data range
   const handleStrategyChange = (name: string) => {
@@ -126,43 +131,18 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
       </div>
 
       {/* Date range */}
-      <div>
-        <label className="mb-1 block text-[11px] text-gray-500">
-          Date Range
-          {dateRange && (
-            <span className="ml-1 font-normal text-gray-600">
-              (data: {dateRange.start} → {dateRange.end})
-            </span>
-          )}
-        </label>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <span className="text-[10px] text-gray-600">Start month</span>
-            <input
-              type="month"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              min={dateRange?.start}
-              max={dateRange?.end}
-              className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <span className="text-[10px] text-gray-600">End month</span>
-            <input
-              type="month"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              min={dateRange?.start}
-              max={dateRange?.end}
-              className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-        </div>
-        {!dateRange && className && (
-          <p className="mt-0.5 text-[10px] text-yellow-500">No built data found — build data first</p>
-        )}
-      </div>
+      {className && availableMonths.length > 0 && (
+        <MonthRangePicker
+          months={availableMonths}
+          startDate={startDate}
+          endDate={endDate}
+          onRangeChange={(s, e) => { setStartDate(s); setEndDate(e); }}
+          showLegend={false}
+        />
+      )}
+      {className && availableMonths.length === 0 && (
+        <p className="text-[10px] text-yellow-500">No built data found — build data first</p>
+      )}
 
       {/* Cost model — compact row */}
       <div>
