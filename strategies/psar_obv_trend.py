@@ -110,12 +110,13 @@ class SOBVModule(SignalModule):
 
     Uses EMA-smoothed OBV which filters hourly noise better than raw OBV.
     Tracks SOBV direction over a lookback window.
-    Favor long when SOBV is rising, favor short when falling.
+    Only signals when velocity (slope as % of SOBV) exceeds a threshold.
     """
 
-    def __init__(self, ema_length: int = 14, lookback: int = 5):
+    def __init__(self, ema_length: int = 14, lookback: int = 24, min_velocity_pct: float = 2.0):
         self.ema_length = ema_length
         self.lookback = lookback
+        self.min_velocity_pct = min_velocity_pct
         self._sobv_history: list[float] = []
 
     @property
@@ -134,11 +135,18 @@ class SOBVModule(SignalModule):
         if len(self._sobv_history) < self.lookback:
             return ModuleSignal.hold()
 
-        # Simple slope: compare current to oldest in window
-        slope = self._sobv_history[-1] - self._sobv_history[0]
-        if slope > 0:
+        current = self._sobv_history[-1]
+        oldest = self._sobv_history[0]
+
+        # Velocity: slope normalized as % of SOBV value
+        if abs(oldest) < 1e-9:
+            return ModuleSignal.hold()
+        velocity_pct = ((current - oldest) / abs(oldest)) * 100
+
+        # Only signal if velocity exceeds threshold
+        if velocity_pct > self.min_velocity_pct:
             return ModuleSignal.long()
-        elif slope < 0:
+        elif velocity_pct < -self.min_velocity_pct:
             return ModuleSignal.short()
         return ModuleSignal.hold()
 
@@ -163,7 +171,7 @@ class PSAROBVTrend(SingleAssetStrategy):
 
         self.modules: list[SignalModule] = [
             PSARModule(),
-            SOBVModule(ema_length=14, lookback=5),
+            SOBVModule(ema_length=14, lookback=24, min_velocity_pct=2.0),
         ]
         self._last_h1_time = None
 
@@ -208,20 +216,19 @@ class PSAROBVTrend(SingleAssetStrategy):
         # Evaluate all modules
         signals = [m.evaluate(h1, price) for m in self.modules]
 
-        # --- Exit: PSAR flip against position ---
-        if position is not None:
-            psar = h1.get("PSAR")
-            if psar is not None and not pd.isna(psar):
-                if position.side.value == "long" and price < psar:
-                    return Signal.close(reason=f"psar_flip_bearish psar={psar:.0f}>price={price:.0f}")
-                elif position.side.value == "short" and price > psar:
-                    return Signal.close(reason=f"psar_flip_bullish price={price:.0f}>psar={psar:.0f}")
-
-        # --- Entry: all modules must agree ---
+        # --- Entry: all modules must agree, use 5% trailing stop ---
         if position is None:
             if all(s.favor_long for s in signals):
-                return Signal.buy(size=1.0, reason="all_modules_long")
+                return Signal.buy(
+                    size=1.0,
+                    reason="all_modules_long",
+                    trailing_stop_pct=5.0,
+                )
             if all(s.favor_short for s in signals):
-                return Signal.sell(size=1.0, reason="all_modules_short")
+                return Signal.sell(
+                    size=1.0,
+                    reason="all_modules_short",
+                    trailing_stop_pct=5.0,
+                )
 
         return Signal.hold()
