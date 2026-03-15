@@ -287,7 +287,7 @@ class CostModel:
 DEFAULT_COSTS = CostModel(
     commission_bps=3.5,   # Typical crypto taker fee
     slippage_bps=2.0,     # Conservative slippage
-    funding_daily_bps=5.0,  # Typical funding rate
+    funding_daily_bps=3.0,  # Binance BTCUSDT median: 3.0 bps/day (0.01% per 8h)
     bars_per_day=24,
 )
 

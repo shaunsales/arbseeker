@@ -18,7 +18,7 @@ export default function RunBacktestForm({ strategy, onRunComplete }: Props) {
   const [capital, setCapital] = useState("100000");
   const [commissionBps, setCommissionBps] = useState("3.5");
   const [slippageBps, setSlippageBps] = useState("2.0");
-  const [fundingBps, setFundingBps] = useState("5.0");
+  const [fundingBps, setFundingBps] = useState("3.0");
   const [error, setError] = useState("");
 
   const dateRange = strategy.data_date_range ?? null;

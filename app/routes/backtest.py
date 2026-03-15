@@ -328,7 +328,7 @@ class RunBacktestRequest(BaseModel):
     capital: float = 100_000
     commission_bps: float = 3.5
     slippage_bps: float = 2.0
-    funding_daily_bps: float = 5.0
+    funding_daily_bps: float = 3.0
     start_date: str | None = None  # "YYYY-MM" — inclusive start
     end_date: str | None = None    # "YYYY-MM" — inclusive end (last day of month)
 

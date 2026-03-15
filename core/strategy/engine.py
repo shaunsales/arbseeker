@@ -298,7 +298,6 @@ class BacktestEngine:
                     entry_reason=signal.reason,
                 )
                 entry_bar_idx = idx
-                current_capital -= costs.round_trip_cost(size) / 2  # Entry cost
                 
             elif signal.action == "sell" and position is None:
                 # Calculate position size
@@ -316,7 +315,6 @@ class BacktestEngine:
                     entry_reason=signal.reason,
                 )
                 entry_bar_idx = idx
-                current_capital -= costs.round_trip_cost(size) / 2
                 
             elif signal.action == "close" and position is not None:
                 # Close position
