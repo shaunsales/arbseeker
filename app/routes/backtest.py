@@ -329,6 +329,8 @@ class RunBacktestRequest(BaseModel):
     commission_bps: float = 3.5
     slippage_bps: float = 2.0
     funding_daily_bps: float = 5.0
+    start_date: str | None = None  # "YYYY-MM" — inclusive start
+    end_date: str | None = None    # "YYYY-MM" — inclusive end (last day of month)
 
 
 @router.post("/run")
@@ -349,7 +351,13 @@ async def run_backtest(req: RunBacktestRequest):
             funding_daily_bps=req.funding_daily_bps,
         )
         engine = BacktestEngine(verbose=False)
-        result = engine.run(instance, capital=req.capital, costs=costs)
+        result = engine.run(
+            instance,
+            capital=req.capital,
+            costs=costs,
+            start_date=req.start_date,
+            end_date=req.end_date,
+        )
 
         return {
             "success": True,

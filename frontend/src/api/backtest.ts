@@ -75,6 +75,8 @@ export function runBacktest(req: {
   commission_bps?: number;
   slippage_bps?: number;
   funding_daily_bps?: number;
+  start_date?: string; // "YYYY-MM"
+  end_date?: string;   // "YYYY-MM"
 }): Promise<{
   success: boolean;
   strategy_name?: string;

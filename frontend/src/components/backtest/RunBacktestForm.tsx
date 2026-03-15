@@ -33,6 +33,8 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
   const [commissionBps, setCommissionBps] = useState("3.5");
   const [slippageBps, setSlippageBps] = useState("2.0");
   const [fundingBps, setFundingBps] = useState("5.0");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [error, setError] = useState("");
 
   const eligible = strategies.filter((s) => s.has_data_spec);
@@ -65,6 +67,8 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
       commission_bps: parseFloat(commissionBps) || 0,
       slippage_bps: parseFloat(slippageBps) || 0,
       funding_daily_bps: parseFloat(fundingBps) || 0,
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
     });
   };
 
@@ -101,6 +105,32 @@ export default function RunBacktestForm({ strategies, onRunComplete, variant = "
           onChange={(e) => setCapital(e.target.value)}
           className="h-8 text-xs"
         />
+      </div>
+
+      {/* Date range */}
+      <div>
+        <label className="mb-1 block text-[11px] text-gray-500">Date Range (optional)</label>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-[10px] text-gray-600">Start month</span>
+            <input
+              type="month"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <span className="text-[10px] text-gray-600">End month</span>
+            <input
+              type="month"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="h-7 w-full rounded border border-gray-700 bg-gray-800 px-2 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        </div>
+        <p className="mt-0.5 text-[10px] text-gray-600">Leave blank to use all available data</p>
       </div>
 
       {/* Cost model — compact row */}

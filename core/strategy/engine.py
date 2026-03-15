@@ -185,6 +185,9 @@ class BacktestEngine:
         ticker: Optional[str] = None,
         interval: Optional[str] = None,
         years: Optional[list[int]] = None,
+        # Date range filter ("YYYY-MM" strings, inclusive)
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> BacktestResult:
         """
         Run a backtest.
@@ -206,7 +209,7 @@ class BacktestEngine:
         elif isinstance(strategy, SingleAssetStrategy):
             # Use v2 path if strategy defines data_spec()
             if strategy.data_spec() is not None:
-                return self._run_single_asset_v2(strategy, capital, costs)
+                return self._run_single_asset_v2(strategy, capital, costs, start_date, end_date)
             return self._run_single_asset(
                 strategy, data, capital, costs,
                 venue, market, ticker, interval, years
@@ -368,6 +371,8 @@ class BacktestEngine:
         strategy: SingleAssetStrategy,
         capital: float,
         costs: CostModel,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
     ) -> BacktestResult:
         """
         Run backtest for a strategy that defines data_spec().
@@ -375,6 +380,10 @@ class BacktestEngine:
         Iterates 1m bars with look-ahead-safe multi-interval data access.
         Records bar-level state, captures decision context on trades.
         Saves results to the strategy output folder.
+        
+        start_date / end_date: optional "YYYY-MM" strings to restrict the
+        backtest window.  Data outside the window is still loaded (indicators
+        need history) but only 1m bars inside the window are iterated.
         """
         spec = strategy.data_spec()
         folder = strategy_folder(strategy.name)
@@ -393,6 +402,26 @@ class BacktestEngine:
             for iv in spec.intervals:
                 n = len(data._frames[iv])
                 print(f"Loaded {iv}: {n:,} bars")
+        
+        # Apply date range filter to 1m bars only (higher-interval frames
+        # remain intact so indicator lookback works correctly).
+        if start_date or end_date:
+            df_1m = data._frames["1m"]
+            if start_date:
+                dt_start = pd.Timestamp(f"{start_date}-01")
+                df_1m = df_1m[df_1m.index >= dt_start]
+            if end_date:
+                # End of the last day in the specified month
+                year, month = map(int, end_date.split("-"))
+                if month == 12:
+                    dt_end = pd.Timestamp(f"{year + 1}-01-01")
+                else:
+                    dt_end = pd.Timestamp(f"{year}-{month + 1:02d}-01")
+                df_1m = df_1m[df_1m.index < dt_end]
+            data._frames["1m"] = df_1m
+            data._ts_arrays["1m"] = df_1m.index.values.astype("int64")
+            if self.verbose:
+                print(f"Date filter: {start_date or '...'} → {end_date or '...'} → {len(df_1m):,} 1m bars")
         
         # Get the 1m DataFrame — this drives the iteration
         df_1m = data._frames["1m"]
@@ -413,6 +442,8 @@ class BacktestEngine:
                 "capital": capital,
                 "costs": costs_1m.__dict__,
                 "spec": spec.to_dict(),
+                "start_date": start_date,
+                "end_date": end_date,
             },
             start_time=df_1m.index[0],
             end_time=df_1m.index[-1],
