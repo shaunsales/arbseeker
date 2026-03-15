@@ -78,6 +78,28 @@ def _pick_resample_interval(n_bars_1m: int) -> str:
     return "1h"
 
 
+def _chart_interval_from_spec(config: dict) -> str | None:
+    """Return the coarsest non-1m indicator interval from the run config spec.
+
+    This is the natural chart interval — candles align with strategy decisions.
+    Returns None if no higher-timeframe intervals exist (fall back to auto-pick).
+    """
+    intervals = config.get("spec", {}).get("intervals", {})
+    best: str | None = None
+    best_seconds = 0
+    for iv in intervals:
+        if iv == "1m":
+            continue
+        try:
+            secs = int(pd.Timedelta(iv).total_seconds())
+        except Exception:
+            continue
+        if secs > best_seconds:
+            best_seconds = secs
+            best = iv
+    return best
+
+
 def _resample_bars(df: pd.DataFrame, interval: str) -> pd.DataFrame:
     """Resample 1m OHLCV bars to a coarser interval."""
     if interval == "1min":
@@ -151,7 +173,11 @@ async def view_run(strategy_name: str, run_id: str):
 
     if bars_path.exists():
         bars_df = pd.read_parquet(bars_path)
-        interval = _pick_resample_interval(len(bars_df))
+
+        # Use the strategy's indicator interval for charts (aligns with decisions);
+        # fall back to auto-pick when no higher-timeframe indicators exist.
+        spec_interval = _chart_interval_from_spec(meta.get("config", {}))
+        interval = spec_interval or _pick_resample_interval(len(bars_df))
         bars_r = _resample_bars(bars_df, interval)
         resampled_index = bars_r.index
 
@@ -160,6 +186,10 @@ async def view_run(strategy_name: str, run_id: str):
 
         # OHLCV for candlestick rendering — bars parquet may only have close,
         # so load raw 1m data from strategy data folder and resample it.
+        # Filter to the backtest window to exclude indicator-warmup bars.
+        bt_start = bars_df.index.min()
+        bt_end = bars_df.index.max()
+
         ohlcv_data = []
         volume_data = []
         ohlcv_source = bars_r
@@ -168,6 +198,7 @@ async def view_run(strategy_name: str, run_id: str):
             raw_1m_path = strategy_folder(strategy_name) / "data" / "1m.parquet"
             if raw_1m_path.exists():
                 raw_1m = pd.read_parquet(raw_1m_path, columns=["open", "high", "low", "close", "volume"])
+                raw_1m = raw_1m.loc[bt_start:bt_end]  # clip to backtest window
                 ohlcv_source = _resample_bars(raw_1m, interval)
                 has_ohlc = all(c in ohlcv_source.columns for c in ["open", "high", "low", "close"])
 
