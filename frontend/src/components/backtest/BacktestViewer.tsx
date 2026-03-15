@@ -670,7 +670,7 @@ function BacktestCharts({
   // Compute main chart height: base + pane per visible panel indicator + position pane
   const visiblePanels = panelIndicators.filter((ind) => !hidden.has(ind.name));
   const hasPositionPane = positionData.length > 0;
-  const mainChartHeight = 300 + visiblePanels.length * 120 + (hasPositionPane ? 60 : 0);
+  const mainChartHeight = 500 + visiblePanels.length * 120 + (hasPositionPane ? 60 : 0);
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -730,18 +730,45 @@ function BacktestCharts({
         namedSeries.push({ name: "Price", color: "#9ca3af", series: priceSeries, type: "line" });
       }
 
-      // Pane 0: Trade markers on price series
-      if (chartData.markers?.length) {
+      // Pane 0: Trade markers with dynamic price offset
+      if (chartData.markers?.length && chartData.ohlcv?.length) {
+        // Build sorted candle times for binary-search snapping
+        const candles = chartData.ohlcv.map((b) => ({ time: b.time, high: b.high, low: b.low }));
+        candles.sort((a, b) => a.time - b.time);
+        const candleTimes = candles.map((c) => c.time);
+
+        // Find the enclosing candle for any timestamp (floor to nearest candle)
+        const findCandle = (ts: number) => {
+          let lo = 0, hi = candleTimes.length - 1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >>> 1;
+            if (candleTimes[mid] <= ts) lo = mid + 1;
+            else hi = mid - 1;
+          }
+          return candles[Math.max(hi, 0)];
+        };
+
+        // Use a consistent offset for all markers (median candle range × 1.5)
+        const ranges = candles.map((c) => c.high - c.low).sort((a, b) => a - b);
+        const medianRange = ranges[Math.floor(ranges.length / 2)] || 1;
+        const offset = medianRange * 1.5;
+
         const sorted = [...chartData.markers]
           .sort((a, b) => a.time - b.time)
-          .map((m) => ({
-            time: m.time as never,
-            position: m.position as never,
-            color: m.color,
-            shape: m.shape as never,
-            text: m.text ?? "",
-          }));
-        createSeriesMarkers(priceSeries, sorted);
+          .map((m) => {
+            const candle = findCandle(m.time);
+            const isAbove = m.position === "aboveBar";
+            return {
+              time: m.time as never,
+              position: (isAbove ? "atPriceTop" : "atPriceBottom") as never,
+              price: isAbove ? candle.high + offset : candle.low - offset,
+              color: m.color,
+              shape: m.shape as never,
+              text: m.text ?? "",
+              size: 1,
+            };
+          });
+        createSeriesMarkers(priceSeries, sorted as never);
       }
 
       // Pane 0: Overlay indicators (PSAR dots, moving averages, etc.)

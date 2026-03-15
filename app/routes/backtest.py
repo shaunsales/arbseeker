@@ -277,8 +277,8 @@ async def view_run(strategy_name: str, run_id: str):
             })
 
         # Build trade markers for chart
-        # All longs (entry + exit) above bar, all shorts below bar.
-        # Larger size (3) pushes markers further from candles.
+        # Longs (entry + exit) above bar, shorts below bar.
+        # Frontend applies atPriceTop/atPriceBottom with dynamic price offset.
         chart_data["markers"] = []
         for i, row in trades_df.iterrows():
             entry_ts = pd.Timestamp(row["entry_time"])
@@ -290,7 +290,6 @@ async def view_run(strategy_name: str, run_id: str):
                 "color": "#06b6d4" if is_long else "#f97316",
                 "shape": "arrowDown" if is_long else "arrowUp",
                 "text": "L" if is_long else "S",
-                "size": 3,
             })
             chart_data["markers"].append({
                 "time": int(exit_ts.timestamp()),
@@ -298,7 +297,6 @@ async def view_run(strategy_name: str, run_id: str):
                 "color": "#a78bfa" if is_long else "#c084fc",
                 "shape": "arrowDown" if is_long else "arrowUp",
                 "text": "✕",
-                "size": 3,
             })
 
     # ------------------------------------------------------------------
