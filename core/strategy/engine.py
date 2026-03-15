@@ -403,30 +403,30 @@ class BacktestEngine:
                 n = len(data._frames[iv])
                 print(f"Loaded {iv}: {n:,} bars")
         
-        # Apply date range filter to 1m bars only (higher-interval frames
-        # remain intact so indicator lookback works correctly).
+        # Build iteration range over 1m bars.
+        # We keep the FULL 1m frame in data (so bar() lookback works) but
+        # only iterate bars inside the requested date window.
+        df_1m_full = data._frames["1m"]
+        iter_start = 0
+        iter_end = len(df_1m_full)
+        
         if start_date or end_date:
-            df_1m = data._frames["1m"]
-            # Match timezone of the data index (may be UTC-aware)
-            tz = df_1m.index.tz
+            tz = df_1m_full.index.tz
             if start_date:
                 dt_start = pd.Timestamp(f"{start_date}-01", tz=tz)
-                df_1m = df_1m[df_1m.index >= dt_start]
+                iter_start = int(df_1m_full.index.searchsorted(dt_start))
             if end_date:
-                # End of the last day in the specified month
                 year, month = map(int, end_date.split("-"))
                 if month == 12:
                     dt_end = pd.Timestamp(f"{year + 1}-01-01", tz=tz)
                 else:
                     dt_end = pd.Timestamp(f"{year}-{month + 1:02d}-01", tz=tz)
-                df_1m = df_1m[df_1m.index < dt_end]
-            data._frames["1m"] = df_1m
-            data._ts_arrays["1m"] = df_1m.index.values.astype("int64")
+                iter_end = int(df_1m_full.index.searchsorted(dt_end))
             if self.verbose:
-                print(f"Date filter: {start_date or '...'} → {end_date or '...'} → {len(df_1m):,} 1m bars")
+                print(f"Date filter: {start_date or '...'} → {end_date or '...'} "
+                      f"→ {iter_end - iter_start:,} of {len(df_1m_full):,} 1m bars")
         
-        # Get the 1m DataFrame — this drives the iteration
-        df_1m = data._frames["1m"]
+        df_1m = df_1m_full.iloc[iter_start:iter_end]
         ticker = spec.ticker
         
         # Costs: override bars_per_day for 1m bars
