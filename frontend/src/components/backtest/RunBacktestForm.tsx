@@ -5,18 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MonthRangePicker, { expandMonthRange } from "@/components/ui/month-range-picker";
 import { Play, Loader2 } from "lucide-react";
-
-export interface BacktestStrategy {
-  class_name: string;
-  module: string;
-  has_data_spec: boolean;
-  data_date_range?: { start: string; end: string } | null;
-  last_modified?: string | null;
-}
+import type { StrategyListItem } from "@/types/api";
 
 interface Props {
   /** The pre-selected strategy (already chosen via selector). */
-  strategy: BacktestStrategy;
+  strategy: StrategyListItem;
   onRunComplete?: (strategyName: string, runId: string) => void;
 }
 

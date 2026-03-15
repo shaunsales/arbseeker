@@ -116,6 +116,8 @@ export interface StrategyListItem {
   class_name: string;
   module: string;
   has_data_spec: boolean;
+  data_date_range?: { start: string; end: string } | null;
+  last_modified?: string | null;
 }
 
 export interface IndicatorSpec {

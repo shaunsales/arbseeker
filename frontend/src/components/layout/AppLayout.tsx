@@ -3,10 +3,10 @@ import {
   Database,
   FlaskConical,
   Play,
-  TrendingUp,
   ChevronRight,
   Plug,
 } from "lucide-react";
+import antlyrLogo from "@/assets/antlyr-logo.png";
 import {
   Sidebar,
   SidebarContent,
@@ -91,7 +91,7 @@ function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       <SidebarHeader className="px-4 py-4">
         <NavLink to="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-          <TrendingUp className="h-5 w-5 shrink-0 text-blue-400" />
+          <img src={antlyrLogo} alt="Antlyr" className="h-5 w-5 shrink-0" />
           <span className="text-sm font-bold tracking-wide text-sidebar-foreground group-data-[collapsible=icon]:hidden">
             Antlyr
           </span>
