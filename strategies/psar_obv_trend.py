@@ -208,13 +208,20 @@ class PSAROBVTrend(SingleAssetStrategy):
         # Evaluate all modules
         signals = [m.evaluate(h1, price) for m in self.modules]
 
+        # --- Exit: PSAR flip against position ---
+        if position is not None:
+            psar = h1.get("PSAR")
+            if psar is not None and not pd.isna(psar):
+                if position.side.value == "long" and price < psar:
+                    return Signal.close(reason=f"psar_flip_bearish psar={psar:.0f}>price={price:.0f}")
+                elif position.side.value == "short" and price > psar:
+                    return Signal.close(reason=f"psar_flip_bullish price={price:.0f}>psar={psar:.0f}")
+
         # --- Entry: all modules must agree ---
         if position is None:
             if all(s.favor_long for s in signals):
                 return Signal.buy(size=1.0, reason="all_modules_long")
             if all(s.favor_short for s in signals):
                 return Signal.sell(size=1.0, reason="all_modules_short")
-
-        # --- Exit: TBD ---
 
         return Signal.hold()
