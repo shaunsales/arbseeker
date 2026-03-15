@@ -7,6 +7,7 @@ import DownloadPage from "@/pages/DownloadPage";
 import StrategyPage from "@/pages/StrategyPage";
 import BasisPage from "@/pages/BasisPage";
 import BacktestPage from "@/pages/BacktestPage";
+import BacktestExecutionPage from "@/pages/BacktestExecutionPage";
 import CoinRoutesPage from "@/pages/CoinRoutesPage";
 
 const queryClient = new QueryClient({
@@ -35,7 +36,9 @@ export default function App() {
               <Route path="/strategies/multi-leg" element={<MultiLegPlaceholder />} />
 
               {/* Backtest */}
-              <Route path="/backtest" element={<BacktestPage />} />
+              <Route path="/backtest" element={<Navigate to="/backtest/results" replace />} />
+              <Route path="/backtest/results" element={<BacktestPage />} />
+              <Route path="/backtest/execution" element={<BacktestExecutionPage />} />
 
               {/* Execution */}
               <Route path="/coinroutes" element={<CoinRoutesPage />} />

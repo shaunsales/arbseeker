@@ -59,7 +59,10 @@ const navItems: NavItem[] = [
   {
     label: "Backtest",
     icon: Play,
-    to: "/backtest",
+    children: [
+      { label: "Results", to: "/backtest/results" },
+      { label: "Execution", to: "/backtest/execution" },
+    ],
   },
   {
     label: "CoinRoutes",
