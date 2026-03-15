@@ -277,29 +277,28 @@ async def view_run(strategy_name: str, run_id: str):
             })
 
         # Build trade markers for chart
-        # Position by direction: long entry above / exit below; short entry below / exit above
-        # This spreads markers across both sides of the candle to reduce overlap.
+        # All longs (entry + exit) above bar, all shorts below bar.
+        # Larger size (3) pushes markers further from candles.
         chart_data["markers"] = []
         for i, row in trades_df.iterrows():
             entry_ts = pd.Timestamp(row["entry_time"])
             exit_ts = pd.Timestamp(row["exit_time"])
             is_long = row.get("side", "") == "long"
-            win = float(row.get("net_pnl", 0)) >= 0
             chart_data["markers"].append({
                 "time": int(entry_ts.timestamp()),
                 "position": "aboveBar" if is_long else "belowBar",
                 "color": "#06b6d4" if is_long else "#f97316",
                 "shape": "arrowDown" if is_long else "arrowUp",
                 "text": "L" if is_long else "S",
-                "size": 1,
+                "size": 3,
             })
             chart_data["markers"].append({
                 "time": int(exit_ts.timestamp()),
-                "position": "belowBar" if is_long else "aboveBar",
-                "color": "#22c55e" if win else "#ef4444",
-                "shape": "arrowUp" if is_long else "arrowDown",
+                "position": "aboveBar" if is_long else "belowBar",
+                "color": "#a78bfa" if is_long else "#c084fc",
+                "shape": "arrowDown" if is_long else "arrowUp",
                 "text": "✕",
-                "size": 1,
+                "size": 3,
             })
 
     # ------------------------------------------------------------------
