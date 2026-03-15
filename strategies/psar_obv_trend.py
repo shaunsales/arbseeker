@@ -101,35 +101,41 @@ class PSARModule(SignalModule):
         return ModuleSignal.hold()
 
 
-# ─── OBV module ──────────────────────────────────────────────────────────────
+# ─── SOBV module ─────────────────────────────────────────────────────────────
 
 
-class OBVModule(SignalModule):
+class SOBVModule(SignalModule):
     """
-    On-Balance Volume trend module.
+    Smoothed On-Balance Volume (SOBV) trend module.
 
-    Tracks OBV direction over a lookback window.
-    Favor long when OBV is rising, favor short when falling.
+    Uses EMA-smoothed OBV which filters hourly noise better than raw OBV.
+    Tracks SOBV direction over a lookback window.
+    Favor long when SOBV is rising, favor short when falling.
     """
 
-    def __init__(self, lookback: int = 5):
+    def __init__(self, ema_length: int = 14, lookback: int = 5):
+        self.ema_length = ema_length
         self.lookback = lookback
-        self._obv_history: list[float] = []
+        self._sobv_history: list[float] = []
+
+    @property
+    def column_name(self) -> str:
+        return f"SOBV_{self.ema_length}"
 
     def evaluate(self, bar: pd.Series, price: float) -> ModuleSignal:
-        obv = bar.get("OBV")
-        if obv is None or pd.isna(obv):
+        sobv = bar.get(self.column_name)
+        if sobv is None or pd.isna(sobv):
             return ModuleSignal.hold()
 
-        self._obv_history.append(float(obv))
-        if len(self._obv_history) > self.lookback:
-            self._obv_history = self._obv_history[-self.lookback:]
+        self._sobv_history.append(float(sobv))
+        if len(self._sobv_history) > self.lookback:
+            self._sobv_history = self._sobv_history[-self.lookback:]
 
-        if len(self._obv_history) < self.lookback:
+        if len(self._sobv_history) < self.lookback:
             return ModuleSignal.hold()
 
         # Simple slope: compare current to oldest in window
-        slope = self._obv_history[-1] - self._obv_history[0]
+        slope = self._sobv_history[-1] - self._sobv_history[0]
         if slope > 0:
             return ModuleSignal.long()
         elif slope < 0:
@@ -137,7 +143,7 @@ class OBVModule(SignalModule):
         return ModuleSignal.hold()
 
     def reset(self) -> None:
-        self._obv_history.clear()
+        self._sobv_history.clear()
 
 
 # ─── Strategy ────────────────────────────────────────────────────────────────
@@ -157,7 +163,7 @@ class PSAROBVTrend(SingleAssetStrategy):
 
         self.modules: list[SignalModule] = [
             PSARModule(),
-            OBVModule(lookback=5),
+            SOBVModule(ema_length=14, lookback=5),
         ]
         self._last_h1_time = None
 
@@ -170,7 +176,7 @@ class PSAROBVTrend(SingleAssetStrategy):
                 "1m": [],
                 "1h": [
                     ("psar", {"af": 0.02, "af_step": 0.02, "max_af": 0.2}),
-                    ("obv", {}),
+                    ("sobv", {"length": 14}),
                 ],
             },
         )
@@ -178,7 +184,7 @@ class PSAROBVTrend(SingleAssetStrategy):
     def required_indicators(self) -> list[tuple[str, dict]]:
         return [
             ("psar", {"af": 0.02, "af_step": 0.02, "max_af": 0.2}),
-            ("obv", {}),
+            ("sobv", {"length": 14}),
         ]
 
     def on_bar(self, timestamp, data: StrategyData, balance: float, position: Optional[Position]):
