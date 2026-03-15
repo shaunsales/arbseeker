@@ -407,16 +407,18 @@ class BacktestEngine:
         # remain intact so indicator lookback works correctly).
         if start_date or end_date:
             df_1m = data._frames["1m"]
+            # Match timezone of the data index (may be UTC-aware)
+            tz = df_1m.index.tz
             if start_date:
-                dt_start = pd.Timestamp(f"{start_date}-01")
+                dt_start = pd.Timestamp(f"{start_date}-01", tz=tz)
                 df_1m = df_1m[df_1m.index >= dt_start]
             if end_date:
                 # End of the last day in the specified month
                 year, month = map(int, end_date.split("-"))
                 if month == 12:
-                    dt_end = pd.Timestamp(f"{year + 1}-01-01")
+                    dt_end = pd.Timestamp(f"{year + 1}-01-01", tz=tz)
                 else:
-                    dt_end = pd.Timestamp(f"{year}-{month + 1:02d}-01")
+                    dt_end = pd.Timestamp(f"{year}-{month + 1:02d}-01", tz=tz)
                 df_1m = df_1m[df_1m.index < dt_end]
             data._frames["1m"] = df_1m
             data._ts_arrays["1m"] = df_1m.index.values.astype("int64")
