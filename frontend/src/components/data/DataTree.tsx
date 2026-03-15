@@ -29,7 +29,7 @@ export default function DataTree({ tree, onSelect, selected }: Props) {
 
   return (
     <div className="space-y-0.5 text-sm">
-      {Object.entries(tree).map(([venue, markets]) => {
+      {Object.entries(tree).sort(([a], [b]) => a.localeCompare(b)).map(([venue, markets]) => {
         const venueKey = venue;
         return (
           <div key={venueKey}>
@@ -47,7 +47,7 @@ export default function DataTree({ tree, onSelect, selected }: Props) {
             </button>
 
             {expanded.has(venueKey) &&
-              Object.entries(markets).map(([market, tickers]) => {
+              Object.entries(markets).sort(([a], [b]) => a.localeCompare(b)).map(([market, tickers]) => {
                 const marketKey = `${venue}/${market}`;
                 return (
                   <div key={marketKey} className="ml-4">
@@ -64,7 +64,7 @@ export default function DataTree({ tree, onSelect, selected }: Props) {
                     </button>
 
                     {expanded.has(marketKey) &&
-                      Object.entries(tickers).map(([ticker, intervals]) => {
+                      Object.entries(tickers).sort(([a], [b]) => a.localeCompare(b)).map(([ticker, intervals]) => {
                         const tickerKey = `${venue}/${market}/${ticker}`;
                         return (
                           <div key={tickerKey} className="ml-4">
@@ -87,7 +87,7 @@ export default function DataTree({ tree, onSelect, selected }: Props) {
 
                             {expanded.has(tickerKey) && (
                               <div className="ml-6 space-y-0.5 py-0.5">
-                                {Object.entries(intervals).map(
+                                {Object.entries(intervals).sort(([a], [b]) => a.localeCompare(b)).map(
                                   ([interval, periods]) => (
                                     <button
                                       key={interval}
