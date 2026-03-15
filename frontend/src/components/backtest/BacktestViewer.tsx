@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -12,7 +12,7 @@ import {
 import { DotsSeries } from "@/plugins/dots-series";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, ChevronDown, ChevronLeft, Crosshair } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronLeft, Crosshair, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 
 interface Props {
   data: BacktestViewData;
@@ -563,6 +563,43 @@ function BacktestCharts({
   const legendRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [scaleLabel, setScaleLabel] = useState("");
+
+  const updateScaleLabel = useCallback((from: number, to: number) => {
+    const span = to - from;
+    const hours = span / 3600;
+    const days = hours / 24;
+    if (days >= 365) setScaleLabel(`${(days / 365).toFixed(1)}y`);
+    else if (days >= 30) setScaleLabel(`${Math.round(days / 30)}M`);
+    else if (days >= 1) setScaleLabel(`${Math.round(days)}d`);
+    else setScaleLabel(`${Math.round(hours)}h`);
+  }, []);
+
+  const zoomPreset = useCallback((seconds: number) => {
+    const chart = chartsRef.current[0];
+    if (!chart) return;
+    const ts = chart.timeScale();
+    const range = ts.getVisibleRange();
+    if (!range) return;
+    const mid = ((range.to as number) + (range.from as number)) / 2;
+    const half = seconds / 2;
+    ts.setVisibleRange({ from: (mid - half) as never, to: (mid + half) as never });
+  }, []);
+
+  const zoomBy = useCallback((factor: number) => {
+    const chart = chartsRef.current[0];
+    if (!chart) return;
+    const ts = chart.timeScale();
+    const range = ts.getVisibleRange();
+    if (!range) return;
+    const mid = ((range.to as number) + (range.from as number)) / 2;
+    const half = ((range.to as number) - (range.from as number)) / 2 * factor;
+    ts.setVisibleRange({ from: (mid - half) as never, to: (mid + half) as never });
+  }, []);
+
+  const zoomFit = useCallback(() => {
+    chartsRef.current.forEach((c) => c.timeScale().fitContent());
+  }, []);
 
   const toggleVisibility = (key: string) => {
     setHidden((prev) => {
@@ -798,6 +835,15 @@ function BacktestCharts({
       });
 
       chart.timeScale().fitContent();
+
+      // Track scale label from visible range changes
+      chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+        if (!range) return;
+        updateScaleLabel(range.from as number, range.to as number);
+      });
+      // Set initial label
+      const initRange = chart.timeScale().getVisibleRange();
+      if (initRange) updateScaleLabel(initRange.from as number, initRange.to as number);
     }
 
     // ── Volume chart (separate, synced) ──
@@ -892,6 +938,36 @@ function BacktestCharts({
           })}
         </div>
       )}
+
+      {/* Zoom controls */}
+      <div className="flex items-center gap-1 px-1 pb-1">
+        <span className="mr-1 min-w-[32px] text-center font-mono text-[10px] font-semibold text-gray-400">{scaleLabel}</span>
+        <button onClick={() => zoomBy(0.5)} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Zoom in">
+          <ZoomIn className="h-3.5 w-3.5" />
+        </button>
+        <button onClick={() => zoomBy(2)} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Zoom out">
+          <ZoomOut className="h-3.5 w-3.5" />
+        </button>
+        <div className="mx-1 h-3 w-px bg-gray-800" />
+        {[
+          { label: "1D", secs: 86400 },
+          { label: "3D", secs: 86400 * 3 },
+          { label: "1W", secs: 86400 * 7 },
+          { label: "1M", secs: 86400 * 30 },
+          { label: "3M", secs: 86400 * 90 },
+        ].map((p) => (
+          <button
+            key={p.label}
+            onClick={() => zoomPreset(p.secs)}
+            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition"
+          >
+            {p.label}
+          </button>
+        ))}
+        <button onClick={zoomFit} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Fit all">
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       {/* Crosshair legend overlay */}
       <div className="relative">
