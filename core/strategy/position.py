@@ -8,9 +8,11 @@ Provides dataclasses for tracking:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from enum import Enum
+from pathlib import Path
+import json
 import uuid
 
 
@@ -250,44 +252,180 @@ class Signal:
         return cls(action="hold", size=0.0)
 
 
+class FundingSchedule:
+    """
+    Direction-aware funding rate schedule loaded from historical data.
+    
+    Positive rate = longs pay, shorts receive.
+    Negative rate = shorts pay, longs receive.
+    
+    Uses monthly median rates from static JSON data.
+    """
+    
+    _DATA_FILE = Path(__file__).parent.parent / "data" / "funding_rates_btcusdt.json"
+    _instance: Optional["FundingSchedule"] = None
+    
+    def __init__(self, data_path: Optional[Path] = None):
+        path = data_path or self._DATA_FILE
+        if not path.exists():
+            self._months: dict[str, dict] = {}
+            return
+        with open(path) as f:
+            raw = json.load(f)
+        self._months = raw.get("months", {})
+    
+    @classmethod
+    def default(cls) -> "FundingSchedule":
+        """Singleton access to the default BTCUSDT funding schedule."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    def daily_rate_bps(self, month: str) -> Optional[float]:
+        """
+        Get the median daily funding rate (bps) for a given month.
+        
+        Args:
+            month: "YYYY-MM" string
+            
+        Returns:
+            Median daily rate in bps (positive = longs pay), or None if no data.
+        """
+        entry = self._months.get(month)
+        if entry is None:
+            return None
+        return entry["median_daily_bps"]
+    
+    def funding_cost(
+        self,
+        side: "Side",
+        size: float,
+        entry_time: datetime,
+        exit_time: datetime,
+    ) -> float:
+        """
+        Compute direction-aware funding cost for a position.
+        
+        Prorates across months when a trade spans multiple months.
+        
+        Returns:
+            Cost in USD. Positive = you paid, negative = you received.
+        """
+        if entry_time >= exit_time:
+            return 0.0
+        
+        total_cost = 0.0
+        current = entry_time
+        
+        while current < exit_time:
+            month_key = current.strftime("%Y-%m")
+            
+            # End of this month or exit_time, whichever is first
+            if current.month == 12:
+                month_end = current.replace(year=current.year + 1, month=1, day=1,
+                                            hour=0, minute=0, second=0, microsecond=0)
+            else:
+                month_end = current.replace(month=current.month + 1, day=1,
+                                            hour=0, minute=0, second=0, microsecond=0)
+            
+            period_end = min(month_end, exit_time)
+            days_in_period = (period_end - current).total_seconds() / 86400
+            
+            rate_bps = self.daily_rate_bps(month_key)
+            if rate_bps is not None and days_in_period > 0:
+                # Positive rate = longs pay, shorts receive
+                if side == Side.LONG:
+                    total_cost += size * (rate_bps / 10000) * days_in_period
+                else:  # SHORT
+                    total_cost -= size * (rate_bps / 10000) * days_in_period
+            
+            current = period_end
+        
+        return total_cost
+    
+    @property
+    def available(self) -> bool:
+        """Whether historical funding data is loaded."""
+        return len(self._months) > 0
+
+
 @dataclass
 class CostModel:
     """
     Trading cost model for backtesting.
     
     All costs in basis points (bps) unless otherwise noted.
+    Uses historical funding rates when available (direction-aware),
+    falls back to flat funding_daily_bps otherwise.
     """
     # Per-trade costs (applied on entry and exit)
     commission_bps: float = 0.0  # Commission/fee
     slippage_bps: float = 0.0    # Slippage estimate
     
-    # Holding costs (applied per bar while position is open)
+    # Flat funding fallback (used when no historical data available)
     funding_daily_bps: float = 0.0  # Daily funding rate
     
-    # Computed
-    bars_per_day: int = 24  # For funding calculation (default: hourly bars)
+    # For flat funding calculation
+    bars_per_day: int = 24  # Default: hourly bars
+    
+    # Historical funding schedule (loaded on first use)
+    _funding_schedule: Optional[FundingSchedule] = field(default=None, repr=False)
+    
+    @property
+    def funding_schedule(self) -> FundingSchedule:
+        if self._funding_schedule is None:
+            self._funding_schedule = FundingSchedule.default()
+        return self._funding_schedule
     
     def round_trip_cost(self, size: float) -> float:
         """Calculate total round-trip cost for a position."""
-        # Entry + exit costs
         cost_bps = (self.commission_bps + self.slippage_bps) * 2
         return size * (cost_bps / 10000)
     
-    def holding_cost(self, size: float, bars_held: int) -> float:
-        """Calculate holding cost for a position."""
+    def holding_cost_flat(self, size: float, bars_held: int) -> float:
+        """Calculate holding cost using flat daily rate (fallback)."""
         days_held = bars_held / self.bars_per_day
         return size * (self.funding_daily_bps / 10000) * days_held
     
-    def total_cost(self, size: float, bars_held: int) -> float:
+    def holding_cost(
+        self,
+        size: float,
+        bars_held: int,
+        side: Optional["Side"] = None,
+        entry_time: Optional[datetime] = None,
+        exit_time: Optional[datetime] = None,
+    ) -> float:
+        """
+        Calculate holding cost.
+        
+        Uses historical funding rates (direction-aware) when side and
+        timestamps are provided and data is available.
+        Falls back to flat funding_daily_bps otherwise.
+        """
+        schedule = self.funding_schedule
+        if side is not None and entry_time is not None and exit_time is not None and schedule.available:
+            return schedule.funding_cost(side, size, entry_time, exit_time)
+        return self.holding_cost_flat(size, bars_held)
+    
+    def total_cost(
+        self,
+        size: float,
+        bars_held: int,
+        side: Optional["Side"] = None,
+        entry_time: Optional[datetime] = None,
+        exit_time: Optional[datetime] = None,
+    ) -> float:
         """Calculate total cost (round-trip + holding)."""
-        return self.round_trip_cost(size) + self.holding_cost(size, bars_held)
+        return self.round_trip_cost(size) + self.holding_cost(
+            size, bars_held, side, entry_time, exit_time
+        )
 
 
 # Default cost models for common scenarios
 DEFAULT_COSTS = CostModel(
     commission_bps=3.5,   # Typical crypto taker fee
     slippage_bps=2.0,     # Conservative slippage
-    funding_daily_bps=3.0,  # Binance BTCUSDT median: 3.0 bps/day (0.01% per 8h)
+    funding_daily_bps=3.0,  # Fallback: Binance BTCUSDT median (0.01% per 8h)
     bars_per_day=24,
 )
 

@@ -1,0 +1,484 @@
+{
+  "symbol": "BTCUSDT",
+  "exchange": "binance",
+  "description": "Monthly median/mean funding rates for BTCUSDT perpetual futures",
+  "units": "bps_per_day",
+  "generated": "2026-03-15T09:49:47.330860+00:00",
+  "source": "https://fapi.binance.com/fapi/v1/fundingRate",
+  "months": {
+    "2019-09": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.0,
+      "positive_pct": 100.0,
+      "n_records": 62
+    },
+    "2019-10": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.01,
+      "positive_pct": 84.9,
+      "n_records": 93
+    },
+    "2019-11": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 1.94,
+      "positive_pct": 84.4,
+      "n_records": 90
+    },
+    "2019-12": {
+      "median_daily_bps": 0.96,
+      "mean_daily_bps": 0.56,
+      "positive_pct": 63.4,
+      "n_records": 93
+    },
+    "2020-01": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 5.87,
+      "positive_pct": 94.6,
+      "n_records": 93
+    },
+    "2020-02": {
+      "median_daily_bps": 13.92,
+      "mean_daily_bps": 15.66,
+      "positive_pct": 100.0,
+      "n_records": 87
+    },
+    "2020-03": {
+      "median_daily_bps": 2.05,
+      "mean_daily_bps": -1.72,
+      "positive_pct": 54.8,
+      "n_records": 93
+    },
+    "2020-04": {
+      "median_daily_bps": 1.21,
+      "mean_daily_bps": 0.16,
+      "positive_pct": 58.9,
+      "n_records": 90
+    },
+    "2020-05": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.12,
+      "positive_pct": 84.9,
+      "n_records": 93
+    },
+    "2020-06": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.49,
+      "positive_pct": 86.7,
+      "n_records": 90
+    },
+    "2020-07": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 6.31,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2020-08": {
+      "median_daily_bps": 4.64,
+      "mean_daily_bps": 7.84,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2020-09": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.23,
+      "positive_pct": 80.0,
+      "n_records": 90
+    },
+    "2020-10": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 1.72,
+      "positive_pct": 80.6,
+      "n_records": 93
+    },
+    "2020-11": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 6.46,
+      "positive_pct": 88.9,
+      "n_records": 90
+    },
+    "2020-12": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 6.84,
+      "positive_pct": 98.9,
+      "n_records": 93
+    },
+    "2021-01": {
+      "median_daily_bps": 15.68,
+      "mean_daily_bps": 19.06,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2021-02": {
+      "median_daily_bps": 25.14,
+      "mean_daily_bps": 25.87,
+      "positive_pct": 100.0,
+      "n_records": 84
+    },
+    "2021-03": {
+      "median_daily_bps": 7.43,
+      "mean_daily_bps": 10.28,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2021-04": {
+      "median_daily_bps": 12.04,
+      "mean_daily_bps": 15.03,
+      "positive_pct": 100.0,
+      "n_records": 90
+    },
+    "2021-05": {
+      "median_daily_bps": 3.66,
+      "mean_daily_bps": 7.41,
+      "positive_pct": 92.5,
+      "n_records": 93
+    },
+    "2021-06": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 0.81,
+      "positive_pct": 73.3,
+      "n_records": 90
+    },
+    "2021-07": {
+      "median_daily_bps": 0.4,
+      "mean_daily_bps": -0.56,
+      "positive_pct": 54.8,
+      "n_records": 93
+    },
+    "2021-08": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.78,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2021-09": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.8,
+      "positive_pct": 96.7,
+      "n_records": 90
+    },
+    "2021-10": {
+      "median_daily_bps": 4.72,
+      "mean_daily_bps": 6.53,
+      "positive_pct": 97.8,
+      "n_records": 93
+    },
+    "2021-11": {
+      "median_daily_bps": 4.64,
+      "mean_daily_bps": 7.14,
+      "positive_pct": 100.0,
+      "n_records": 90
+    },
+    "2021-12": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.95,
+      "positive_pct": 97.8,
+      "n_records": 93
+    },
+    "2022-01": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 1.61,
+      "positive_pct": 77.4,
+      "n_records": 93
+    },
+    "2022-02": {
+      "median_daily_bps": 1.66,
+      "mean_daily_bps": 0.86,
+      "positive_pct": 66.7,
+      "n_records": 84
+    },
+    "2022-03": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 1.67,
+      "positive_pct": 80.6,
+      "n_records": 93
+    },
+    "2022-04": {
+      "median_daily_bps": 1.69,
+      "mean_daily_bps": 0.83,
+      "positive_pct": 70.0,
+      "n_records": 90
+    },
+    "2022-05": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 1.52,
+      "positive_pct": 79.6,
+      "n_records": 93
+    },
+    "2022-06": {
+      "median_daily_bps": 1.24,
+      "mean_daily_bps": 0.89,
+      "positive_pct": 70.0,
+      "n_records": 90
+    },
+    "2022-07": {
+      "median_daily_bps": 2.55,
+      "mean_daily_bps": 2.0,
+      "positive_pct": 94.6,
+      "n_records": 93
+    },
+    "2022-08": {
+      "median_daily_bps": 0.43,
+      "mean_daily_bps": 0.52,
+      "positive_pct": 63.4,
+      "n_records": 93
+    },
+    "2022-09": {
+      "median_daily_bps": 1.1,
+      "mean_daily_bps": 1.2,
+      "positive_pct": 86.7,
+      "n_records": 90
+    },
+    "2022-10": {
+      "median_daily_bps": 1.62,
+      "mean_daily_bps": 1.71,
+      "positive_pct": 91.4,
+      "n_records": 93
+    },
+    "2022-11": {
+      "median_daily_bps": 0.5,
+      "mean_daily_bps": -0.58,
+      "positive_pct": 64.4,
+      "n_records": 90
+    },
+    "2022-12": {
+      "median_daily_bps": 1.28,
+      "mean_daily_bps": 1.37,
+      "positive_pct": 88.2,
+      "n_records": 93
+    },
+    "2023-01": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.58,
+      "positive_pct": 95.7,
+      "n_records": 93
+    },
+    "2023-02": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.5,
+      "positive_pct": 98.8,
+      "n_records": 84
+    },
+    "2023-03": {
+      "median_daily_bps": 1.69,
+      "mean_daily_bps": 1.69,
+      "positive_pct": 86.0,
+      "n_records": 93
+    },
+    "2023-04": {
+      "median_daily_bps": 1.55,
+      "mean_daily_bps": 1.5,
+      "positive_pct": 86.7,
+      "n_records": 90
+    },
+    "2023-05": {
+      "median_daily_bps": 1.53,
+      "mean_daily_bps": 1.65,
+      "positive_pct": 94.6,
+      "n_records": 93
+    },
+    "2023-06": {
+      "median_daily_bps": 2.31,
+      "mean_daily_bps": 2.01,
+      "positive_pct": 94.4,
+      "n_records": 90
+    },
+    "2023-07": {
+      "median_daily_bps": 1.94,
+      "mean_daily_bps": 1.82,
+      "positive_pct": 95.7,
+      "n_records": 93
+    },
+    "2023-08": {
+      "median_daily_bps": 2.3,
+      "mean_daily_bps": 1.74,
+      "positive_pct": 82.8,
+      "n_records": 93
+    },
+    "2023-09": {
+      "median_daily_bps": 0.33,
+      "mean_daily_bps": 0.32,
+      "positive_pct": 63.3,
+      "n_records": 90
+    },
+    "2023-10": {
+      "median_daily_bps": 0.85,
+      "mean_daily_bps": 1.19,
+      "positive_pct": 80.6,
+      "n_records": 93
+    },
+    "2023-11": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.39,
+      "positive_pct": 100.0,
+      "n_records": 90
+    },
+    "2023-12": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 5.44,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2024-01": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.61,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2024-02": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 4.51,
+      "positive_pct": 100.0,
+      "n_records": 87
+    },
+    "2024-03": {
+      "median_daily_bps": 9.09,
+      "mean_daily_bps": 10.13,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2024-04": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.8,
+      "positive_pct": 92.2,
+      "n_records": 90
+    },
+    "2024-05": {
+      "median_daily_bps": 2.43,
+      "mean_daily_bps": 2.06,
+      "positive_pct": 92.5,
+      "n_records": 93
+    },
+    "2024-06": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.83,
+      "positive_pct": 100.0,
+      "n_records": 90
+    },
+    "2024-07": {
+      "median_daily_bps": 2.37,
+      "mean_daily_bps": 1.9,
+      "positive_pct": 94.6,
+      "n_records": 93
+    },
+    "2024-08": {
+      "median_daily_bps": 0.4,
+      "mean_daily_bps": 0.4,
+      "positive_pct": 60.2,
+      "n_records": 93
+    },
+    "2024-09": {
+      "median_daily_bps": 0.54,
+      "mean_daily_bps": 0.53,
+      "positive_pct": 66.7,
+      "n_records": 90
+    },
+    "2024-10": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.19,
+      "positive_pct": 94.6,
+      "n_records": 93
+    },
+    "2024-11": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 4.34,
+      "positive_pct": 100.0,
+      "n_records": 90
+    },
+    "2024-12": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 3.89,
+      "positive_pct": 98.9,
+      "n_records": 93
+    },
+    "2025-01": {
+      "median_daily_bps": 2.86,
+      "mean_daily_bps": 2.34,
+      "positive_pct": 97.8,
+      "n_records": 93
+    },
+    "2025-02": {
+      "median_daily_bps": 1.35,
+      "mean_daily_bps": 1.39,
+      "positive_pct": 89.3,
+      "n_records": 84
+    },
+    "2025-03": {
+      "median_daily_bps": 0.58,
+      "mean_daily_bps": 0.59,
+      "positive_pct": 74.2,
+      "n_records": 93
+    },
+    "2025-04": {
+      "median_daily_bps": 0.87,
+      "mean_daily_bps": 0.72,
+      "positive_pct": 73.3,
+      "n_records": 90
+    },
+    "2025-05": {
+      "median_daily_bps": 1.41,
+      "mean_daily_bps": 1.39,
+      "positive_pct": 90.3,
+      "n_records": 93
+    },
+    "2025-06": {
+      "median_daily_bps": 0.78,
+      "mean_daily_bps": 0.79,
+      "positive_pct": 80.0,
+      "n_records": 90
+    },
+    "2025-07": {
+      "median_daily_bps": 3.0,
+      "mean_daily_bps": 2.35,
+      "positive_pct": 100.0,
+      "n_records": 93
+    },
+    "2025-08": {
+      "median_daily_bps": 2.19,
+      "mean_daily_bps": 1.95,
+      "positive_pct": 96.8,
+      "n_records": 93
+    },
+    "2025-09": {
+      "median_daily_bps": 1.5,
+      "mean_daily_bps": 1.46,
+      "positive_pct": 92.2,
+      "n_records": 90
+    },
+    "2025-10": {
+      "median_daily_bps": 0.97,
+      "mean_daily_bps": 0.99,
+      "positive_pct": 74.2,
+      "n_records": 93
+    },
+    "2025-11": {
+      "median_daily_bps": 1.52,
+      "mean_daily_bps": 1.49,
+      "positive_pct": 87.8,
+      "n_records": 90
+    },
+    "2025-12": {
+      "median_daily_bps": 1.32,
+      "mean_daily_bps": 1.37,
+      "positive_pct": 89.2,
+      "n_records": 93
+    },
+    "2026-01": {
+      "median_daily_bps": 1.44,
+      "mean_daily_bps": 1.48,
+      "positive_pct": 95.7,
+      "n_records": 93
+    },
+    "2026-02": {
+      "median_daily_bps": -0.17,
+      "mean_daily_bps": -0.23,
+      "positive_pct": 46.4,
+      "n_records": 84
+    },
+    "2026-03": {
+      "median_daily_bps": -0.45,
+      "mean_daily_bps": -0.46,
+      "positive_pct": 34.1,
+      "n_records": 44
+    }
+  }
+}

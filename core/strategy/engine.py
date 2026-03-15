@@ -176,15 +176,8 @@ class BacktestEngine:
     def run(
         self,
         strategy: Union[SingleAssetStrategy, MultiLeggedStrategy],
-        data: Optional[pd.DataFrame] = None,
         capital: float = 100_000,
         costs: Optional[CostModel] = None,
-        # For loading data automatically
-        venue: Optional[str] = None,
-        market: Optional[str] = None,
-        ticker: Optional[str] = None,
-        interval: Optional[str] = None,
-        years: Optional[list[int]] = None,
         # Date range filter ("YYYY-MM" strings, inclusive)
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -194,10 +187,9 @@ class BacktestEngine:
         
         Args:
             strategy: Strategy instance to backtest
-            data: DataFrame with OHLCV data (optional if loading from storage)
             capital: Starting capital
             costs: Cost model (default: DEFAULT_COSTS)
-            venue, market, ticker, interval, years: For loading data from storage
+            start_date, end_date: "YYYY-MM" date range filter (inclusive)
             
         Returns:
             BacktestResult with trades, equity curve, and metrics
@@ -207,164 +199,22 @@ class BacktestEngine:
         if isinstance(strategy, BasisStrategy):
             return self._run_basis(strategy, capital, costs)
         elif isinstance(strategy, SingleAssetStrategy):
-            # Use v2 path if strategy defines data_spec()
-            if strategy.data_spec() is not None:
-                return self._run_single_asset_v2(strategy, capital, costs, start_date, end_date)
-            return self._run_single_asset(
-                strategy, data, capital, costs,
-                venue, market, ticker, interval, years
-            )
+            if strategy.data_spec() is None:
+                raise ValueError(
+                    f"Strategy {strategy.name} does not define data_spec(). "
+                    "All strategies must define data_spec() for the backtest engine."
+                )
+            return self._run_single_asset(strategy, capital, costs, start_date, end_date)
         elif isinstance(strategy, MultiLeggedStrategy):
             return self._run_multi_legged(strategy, capital, costs)
         else:
             raise TypeError(f"Unknown strategy type: {type(strategy)}")
     
+    # ------------------------------------------------------------------
+    # Single-asset engine (multi-interval, 1m iteration)
+    # ------------------------------------------------------------------
+    
     def _run_single_asset(
-        self,
-        strategy: SingleAssetStrategy,
-        data: Optional[pd.DataFrame],
-        capital: float,
-        costs: CostModel,
-        venue: Optional[str],
-        market: Optional[str],
-        ticker: Optional[str],
-        interval: Optional[str],
-        years: Optional[list[int]],
-    ) -> BacktestResult:
-        """Run backtest for single-asset strategy."""
-        
-        # Load data if not provided
-        if data is None:
-            if not all([venue, market, ticker, interval]):
-                raise ValueError("Must provide data or venue/market/ticker/interval")
-            data = load_ohlcv(venue, market, ticker, interval, years=years)
-            if self.verbose:
-                print(f"Loaded {len(data):,} bars from {venue}/{market}/{ticker}/{interval}")
-        
-        # Compute indicators
-        indicators = strategy.required_indicators()
-        if indicators:
-            data = compute_indicators(data, indicators)
-            if self.verbose:
-                print(f"Computed {len(indicators)} indicator(s)")
-        
-        # Initialize result
-        result = BacktestResult(
-            strategy_name=strategy.name,
-            config={"capital": capital, "costs": costs.__dict__},
-            start_time=data.index[0],
-            end_time=data.index[-1],
-            total_bars=len(data),
-            initial_capital=capital,
-        )
-        
-        # Initialize state
-        current_capital = capital
-        position: Optional[Position] = None
-        trades: list[Trade] = []
-        equity_curve = []
-        entry_bar_idx = 0
-        
-        # Call strategy start hook
-        strategy.on_start(data)
-        
-        # Main backtest loop
-        for idx in range(len(data)):
-            bar = data.iloc[idx]
-            timestamp = data.index[idx]
-            price = bar["close"]
-            
-            # Update position mark-to-market
-            if position:
-                position.update_price(price)
-            
-            # Get signal from strategy
-            signal = strategy.on_bar(idx, data, current_capital, position)
-            
-            # Process signal
-            if signal.action == "buy" and position is None:
-                # Calculate position size
-                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
-                    size = strategy.config.fixed_size_amount * signal.size
-                else:
-                    size = current_capital * signal.size * strategy.config.max_position_pct
-                
-                position = Position(
-                    symbol=ticker or "UNKNOWN",
-                    side=Side.LONG,
-                    entry_time=timestamp,
-                    entry_price=price,
-                    size=size,
-                    entry_reason=signal.reason,
-                )
-                entry_bar_idx = idx
-                
-            elif signal.action == "sell" and position is None:
-                # Calculate position size
-                if strategy.config.fixed_size and strategy.config.fixed_size_amount > 0:
-                    size = strategy.config.fixed_size_amount * signal.size
-                else:
-                    size = current_capital * signal.size * strategy.config.max_position_pct
-                
-                position = Position(
-                    symbol=ticker or "UNKNOWN",
-                    side=Side.SHORT,
-                    entry_time=timestamp,
-                    entry_price=price,
-                    size=size,
-                    entry_reason=signal.reason,
-                )
-                entry_bar_idx = idx
-                
-            elif signal.action == "close" and position is not None:
-                # Close position
-                bars_held = idx - entry_bar_idx
-                trade = position.close(price, timestamp)
-                trade.bars_held = bars_held
-                trade.exit_reason = signal.reason
-                trade.costs = costs.total_cost(position.size, bars_held)
-                trade.net_pnl = trade.gross_pnl - trade.costs
-                
-                current_capital += trade.net_pnl
-                trades.append(trade)
-                position = None
-            
-            # Record equity
-            equity = current_capital
-            if position:
-                equity += position.unrealized_pnl
-            equity_curve.append(equity)
-        
-        # Close any open position at end
-        if position:
-            idx = len(data) - 1
-            bars_held = idx - entry_bar_idx
-            trade = position.close(data.iloc[-1]["close"], data.index[-1])
-            trade.bars_held = bars_held
-            trade.exit_reason = "end_of_data"
-            trade.costs = costs.total_cost(position.size, bars_held)
-            trade.net_pnl = trade.gross_pnl - trade.costs
-            
-            current_capital += trade.net_pnl
-            trades.append(trade)
-            equity_curve[-1] = current_capital
-        
-        # Call strategy end hook
-        strategy.on_end(data)
-        
-        # Build result
-        result.trades = trades
-        result.final_capital = current_capital
-        result.equity_curve = pd.Series(equity_curve, index=data.index)
-        result.compute_metrics()
-        
-        return result
-    
-    # ------------------------------------------------------------------
-    # V2: Multi-interval single-asset engine
-    # ------------------------------------------------------------------
-    
-    def _run_single_asset_v2(
         self,
         strategy: SingleAssetStrategy,
         capital: float,
@@ -484,7 +334,10 @@ class BacktestEngine:
                 trade = position.close(price, timestamp)
                 trade.bars_held = bars_held
                 trade.exit_reason = sl_reason
-                trade.costs = costs_1m.total_cost(position.size, bars_held)
+                trade.costs = costs_1m.total_cost(
+                    position.size, bars_held,
+                    side=position.side, entry_time=position.entry_time, exit_time=timestamp,
+                )
                 trade.net_pnl = trade.gross_pnl - trade.costs
                 trade.metadata = {
                     "entry_context": position.metadata.get("entry_context", {}),
@@ -551,7 +404,10 @@ class BacktestEngine:
                     trade = position.close(price, timestamp)
                     trade.bars_held = bars_held
                     trade.exit_reason = signal.reason
-                    trade.costs = costs_1m.total_cost(position.size, bars_held)
+                    trade.costs = costs_1m.total_cost(
+                        position.size, bars_held,
+                        side=position.side, entry_time=position.entry_time, exit_time=timestamp,
+                    )
                     trade.net_pnl = trade.gross_pnl - trade.costs
                     
                     # Decision context: merge entry + exit snapshots
@@ -590,7 +446,10 @@ class BacktestEngine:
             trade = position.close(price, df_1m.index[-1])
             trade.bars_held = bars_held
             trade.exit_reason = "end_of_data"
-            trade.costs = costs_1m.total_cost(position.size, bars_held)
+            trade.costs = costs_1m.total_cost(
+                position.size, bars_held,
+                side=position.side, entry_time=position.entry_time, exit_time=df_1m.index[-1],
+            )
             trade.net_pnl = trade.gross_pnl - trade.costs
             trade.metadata = {
                 "entry_context": position.metadata.get("entry_context", {}),
