@@ -42,6 +42,12 @@ class PSAROBVTrend(SingleAssetStrategy):
             },
         )
 
+    def required_indicators(self) -> list[tuple[str, dict]]:
+        return [
+            ("psar", {"af": 0.02, "af_step": 0.02, "max_af": 0.2}),
+            ("obv", {}),
+        ]
+
     def on_bar(self, timestamp, data: StrategyData, balance: float, position: Optional[Position]):
         """Called every 1m bar. Entry/exit rules to be implemented."""
         return Signal.hold()
