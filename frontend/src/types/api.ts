@@ -188,6 +188,7 @@ export interface StrategyChartData {
   volume: VolumeBar[];
   overlays: Record<string, { time: number; value: number }[]>;
   indicators: Record<string, { time: number; value: number }[]>;
+  indicator_meta?: Record<string, { display: string; render: RenderSpec; label: string }>;
   resampled: boolean;
   chart_interval: string | null;
   original_bars: number;

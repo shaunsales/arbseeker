@@ -10,7 +10,6 @@ interface Props {
   errors: string[];
   onDeleted: () => void;
   chartExpanded: boolean;
-  onToggleExpand: () => void;
 }
 
 export default function CurrentData({
@@ -19,7 +18,6 @@ export default function CurrentData({
   errors,
   onDeleted,
   chartExpanded,
-  onToggleExpand,
 }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -162,7 +160,6 @@ export default function CurrentData({
           interval={previewInterval}
           onClose={() => setPreviewInterval(null)}
           expanded={chartExpanded}
-          onToggleExpand={onToggleExpand}
         />
       )}
     </>

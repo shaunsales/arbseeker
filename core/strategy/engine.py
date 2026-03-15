@@ -509,10 +509,6 @@ class BacktestEngine:
         results_dir = folder / "results"
         results_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save bar-level parquet
-        bars_path = results_dir / f"{run_id}_bars.parquet"
-        bars_df.to_parquet(bars_path)
-        
         # Save trades parquet
         if trades:
             trades_data = []
@@ -588,7 +584,6 @@ class BacktestEngine:
         
         if self.verbose:
             print(f"\nResults saved to {results_dir}/")
-            print(f"  {run_id}_bars.parquet ({len(bars_df):,} bars)")
             if trades:
                 print(f"  {run_id}_trades.parquet ({len(trades)} trades)")
             print(f"  {run_id}_meta.json")

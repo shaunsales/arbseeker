@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -12,7 +12,8 @@ import {
 import { DotsSeries } from "@/plugins/dots-series";
 import type { BacktestViewData } from "@/api/backtest";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, ChevronDown, ChevronLeft, Crosshair, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { ChevronRight, ChevronDown, ChevronLeft, Crosshair } from "lucide-react";
+import ChartZoomControls from "@/components/ui/chart-zoom-controls";
 
 interface Props {
   data: BacktestViewData;
@@ -559,47 +560,10 @@ function BacktestCharts({
   selectedTradeIdx: number | null;
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
-  const volumeRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const [scaleLabel, setScaleLabel] = useState("");
-
-  const updateScaleLabel = useCallback((from: number, to: number) => {
-    const span = to - from;
-    const hours = span / 3600;
-    const days = hours / 24;
-    if (days >= 365) setScaleLabel(`${(days / 365).toFixed(1)}y`);
-    else if (days >= 30) setScaleLabel(`${Math.round(days / 30)}M`);
-    else if (days >= 1) setScaleLabel(`${Math.round(days)}d`);
-    else setScaleLabel(`${Math.round(hours)}h`);
-  }, []);
-
-  const zoomPreset = useCallback((seconds: number) => {
-    const chart = chartsRef.current[0];
-    if (!chart) return;
-    const ts = chart.timeScale();
-    const range = ts.getVisibleRange();
-    if (!range) return;
-    const mid = ((range.to as number) + (range.from as number)) / 2;
-    const half = seconds / 2;
-    ts.setVisibleRange({ from: (mid - half) as never, to: (mid + half) as never });
-  }, []);
-
-  const zoomBy = useCallback((factor: number) => {
-    const chart = chartsRef.current[0];
-    if (!chart) return;
-    const ts = chart.timeScale();
-    const range = ts.getVisibleRange();
-    if (!range) return;
-    const mid = ((range.to as number) + (range.from as number)) / 2;
-    const half = ((range.to as number) - (range.from as number)) / 2 * factor;
-    ts.setVisibleRange({ from: (mid - half) as never, to: (mid + half) as never });
-  }, []);
-
-  const zoomFit = useCallback(() => {
-    chartsRef.current.forEach((c) => c.timeScale().fitContent());
-  }, []);
+  const [chartVersion, setChartVersion] = useState(0);
 
   const toggleVisibility = (key: string) => {
     setHidden((prev) => {
@@ -667,10 +631,15 @@ function BacktestCharts({
     });
   }, [trades, chartData.ohlcv, selectedTradeIdx]);
 
-  // Compute main chart height: base + pane per visible panel indicator + position pane
+  // Compute pane heights
   const visiblePanels = panelIndicators.filter((ind) => !hidden.has(ind.name));
+  const hasVolume = !!(chartData.volume && chartData.volume.length > 0);
+  // Stretch factors control relative pane sizes (v5.0.8+)
+  const PRICE_STRETCH = 5;
+  const POSITION_STRETCH = 1;
+  const INDICATOR_STRETCH = 1.5;
   const hasPositionPane = positionData.length > 0;
-  const mainChartHeight = 500 + visiblePanels.length * 120 + (hasPositionPane ? 60 : 0);
+  const mainChartHeight = 500 + visiblePanels.length * 100 + (hasPositionPane ? 40 : 0);
 
   useEffect(() => {
     chartsRef.current.forEach((c) => c.remove());
@@ -686,6 +655,7 @@ function BacktestCharts({
         horzLines: { color: "#1f2937" },
       },
       crosshair: { mode: 0 },
+      handleScale: { mouseWheel: false },
       rightPriceScale: { borderColor: "#374151" },
       timeScale: { borderColor: "#374151", timeVisible: true },
     };
@@ -693,7 +663,7 @@ function BacktestCharts({
     // Track series for crosshair legend
     const namedSeries: { name: string; color: string; series: unknown; type: "candle" | "line" | "dots" }[] = [];
 
-    // ── Main chart: Price (pane 0) + overlay indicators + panel indicator panes ──
+    // ── Main chart: Price (pane 0) + overlays + position + panel indicators ──
     const hasOhlcv = chartData.ohlcv && chartData.ohlcv.length > 0;
     const hasPrice = chartData.price && chartData.price.length > 0;
 
@@ -732,12 +702,10 @@ function BacktestCharts({
 
       // Pane 0: Trade markers with dynamic price offset
       if (chartData.markers?.length && chartData.ohlcv?.length) {
-        // Build sorted candle times for binary-search snapping
         const candles = chartData.ohlcv.map((b) => ({ time: b.time, high: b.high, low: b.low }));
         candles.sort((a, b) => a.time - b.time);
         const candleTimes = candles.map((c) => c.time);
 
-        // Find the enclosing candle for any timestamp (floor to nearest candle)
         const findCandle = (ts: number) => {
           let lo = 0, hi = candleTimes.length - 1;
           while (lo <= hi) {
@@ -748,7 +716,6 @@ function BacktestCharts({
           return candles[Math.max(hi, 0)];
         };
 
-        // Use a consistent offset for all markers (median candle range × 1.5)
         const ranges = candles.map((c) => c.high - c.low).sort((a, b) => a - b);
         const medianRange = ranges[Math.floor(ranges.length / 2)] || 1;
         const offset = medianRange * 1.5;
@@ -771,13 +738,26 @@ function BacktestCharts({
         createSeriesMarkers(priceSeries, sorted as never);
       }
 
+      // Pane 0: Volume as overlay histogram (behind candlesticks)
+      if (hasVolume) {
+        const volSeries = chart.addSeries(HistogramSeries, {
+          priceFormat: { type: "volume" },
+          priceScaleId: "volume",
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        volSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.6, bottom: 0 },
+        });
+        volSeries.setData(chartData.volume as never[]);
+      }
+
       // Pane 0: Overlay indicators (PSAR dots, moving averages, etc.)
       overlayIndicators.forEach((ind, idx) => {
         if (hidden.has(ind.name)) return;
         const renderType = (ind.render as { type?: string })?.type ?? "line";
 
         if (renderType === "markers") {
-          // PSAR-style dots
           const dotColor = (ind.render as { color?: string })?.color ?? "#f59e0b";
           const s = chart.addCustomSeries(new DotsSeries(), {
             dotColor,
@@ -789,7 +769,6 @@ function BacktestCharts({
           s.setData(ind.series as never[]);
           namedSeries.push({ name: ind.name, color: dotColor, series: s, type: "dots" });
         } else {
-          // Line overlay
           const color = IND_COLORS[idx % IND_COLORS.length];
           const s = chart.addSeries(LineSeries, { color, lineWidth: 1, title: ind.name, lastValueVisible: false, priceLineVisible: false });
           s.setData(ind.series as never[]);
@@ -797,18 +776,8 @@ function BacktestCharts({
         }
       });
 
-      // Pane 1+: Panel indicators (SOBV, RSI, etc.) — one pane each
+      // Pane 1: Position state histogram (always directly under price)
       let nextPane = 1;
-      panelIndicators.forEach((ind, idx) => {
-        if (hidden.has(ind.name)) return;
-        const pane = nextPane++;
-        const color = IND_COLORS[idx % IND_COLORS.length];
-        const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name, lastValueVisible: false, priceLineVisible: false }, pane);
-        s.setData(ind.series as never[]);
-        namedSeries.push({ name: ind.name, color, series: s, type: "line" });
-      });
-
-      // Position state histogram pane (long/short/flat, win/loss coloring)
       if (positionData.length > 0) {
         const posPaneIdx = nextPane++;
         const posSeries = chart.addSeries(HistogramSeries, {
@@ -820,6 +789,16 @@ function BacktestCharts({
         posSeries.setData(positionData as never[]);
       }
 
+      // Pane 2+: Panel indicators (SOBV, RSI, etc.) — one pane each
+      panelIndicators.forEach((ind, idx) => {
+        if (hidden.has(ind.name)) return;
+        const pane = nextPane++;
+        const color = IND_COLORS[idx % IND_COLORS.length];
+        const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name, lastValueVisible: false, priceLineVisible: false }, pane);
+        s.setData(ind.series as never[]);
+        namedSeries.push({ name: ind.name, color, series: s, type: "line" });
+      });
+
       // ── Crosshair legend ──
       chart.subscribeCrosshairMove((param) => {
         const legend = legendRef.current;
@@ -830,7 +809,6 @@ function BacktestCharts({
         }
         legend.style.display = "flex";
 
-        // Format timestamp
         const ts = param.time as number;
         const d = new Date(ts * 1000);
         const timeStr = d.toLocaleString("en-GB", {
@@ -863,60 +841,29 @@ function BacktestCharts({
 
       chart.timeScale().fitContent();
 
-      // Track scale label from visible range changes
-      chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-        if (!range) return;
-        updateScaleLabel(range.from as number, range.to as number);
-      });
-      // Set initial label
-      const initRange = chart.timeScale().getVisibleRange();
-      if (initRange) updateScaleLabel(initRange.from as number, initRange.to as number);
+      // Set relative pane sizes via stretch factors (v5.0.8+)
+      const panes = chart.panes();
+      if (panes.length > 0) {
+        panes[0].setStretchFactor(PRICE_STRETCH);
+        let pi = 1;
+        if (hasPositionPane && pi < panes.length) {
+          panes[pi].setStretchFactor(POSITION_STRETCH);
+          pi++;
+        }
+        while (pi < panes.length) {
+          panes[pi].setStretchFactor(INDICATOR_STRETCH);
+          pi++;
+        }
+      }
+
+      setChartVersion((v) => v + 1);
     }
-
-    // ── Volume chart (separate, synced) ──
-    if (volumeRef.current && chartData.volume && chartData.volume.length > 0) {
-      const volChart = createChart(volumeRef.current, {
-        ...chartOptions,
-        height: 80,
-        autoSize: true,
-      });
-      chartsRef.current.push(volChart);
-
-      const volSeries = volChart.addSeries(HistogramSeries, {
-        priceFormat: { type: "volume" },
-        priceScaleId: "",
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-      volSeries.setData(chartData.volume as never[]);
-      volChart.timeScale().fitContent();
-    }
-
-    // ── Sync all charts ──
-    const charts = chartsRef.current;
-    let syncSource: number | null = null;
-    const releaseSyncSource = () => { syncSource = null; };
-    window.addEventListener("mouseup", releaseSyncSource);
-    window.addEventListener("touchend", releaseSyncSource);
-
-    charts.forEach((chart, i) => {
-      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return;
-        if (syncSource !== null && syncSource !== i) return;
-        syncSource = i;
-        charts.forEach((other, j) => {
-          if (i !== j) other.timeScale().setVisibleLogicalRange(range);
-        });
-      });
-    });
 
     return () => {
-      window.removeEventListener("mouseup", releaseSyncSource);
-      window.removeEventListener("touchend", releaseSyncSource);
       chartsRef.current.forEach((c) => c.remove());
       chartsRef.current = [];
     };
-  }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight, positionData]);
+  }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight, positionData, hasVolume]);
 
   // ── Scroll to selected trade (preserve user's zoom level) ──
   useEffect(() => {
@@ -967,34 +914,7 @@ function BacktestCharts({
       )}
 
       {/* Zoom controls */}
-      <div className="flex items-center gap-1 px-1 pb-1">
-        <span className="mr-1 min-w-[32px] text-center font-mono text-[10px] font-semibold text-gray-400">{scaleLabel}</span>
-        <button onClick={() => zoomBy(0.5)} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Zoom in">
-          <ZoomIn className="h-3.5 w-3.5" />
-        </button>
-        <button onClick={() => zoomBy(2)} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Zoom out">
-          <ZoomOut className="h-3.5 w-3.5" />
-        </button>
-        <div className="mx-1 h-3 w-px bg-gray-800" />
-        {[
-          { label: "1D", secs: 86400 },
-          { label: "3D", secs: 86400 * 3 },
-          { label: "1W", secs: 86400 * 7 },
-          { label: "1M", secs: 86400 * 30 },
-          { label: "3M", secs: 86400 * 90 },
-        ].map((p) => (
-          <button
-            key={p.label}
-            onClick={() => zoomPreset(p.secs)}
-            className="rounded px-1.5 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition"
-          >
-            {p.label}
-          </button>
-        ))}
-        <button onClick={zoomFit} className="rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition" title="Fit all">
-          <Maximize2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      <ChartZoomControls chartsRef={chartsRef} chartVersion={chartVersion} />
 
       {/* Crosshair legend overlay */}
       <div className="relative">
@@ -1005,10 +925,6 @@ function BacktestCharts({
         />
         <div ref={mainRef} className="rounded bg-gray-900" style={{ height: mainChartHeight }} />
       </div>
-
-      {chartData.volume && chartData.volume.length > 0 && (
-        <div ref={volumeRef} className="rounded bg-gray-900" style={{ height: 80 }} />
-      )}
 
     </div>
   );

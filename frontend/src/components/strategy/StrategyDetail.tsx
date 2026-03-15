@@ -1,9 +1,9 @@
-import { useState, useCallback, useRef } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getStrategySpec } from "@/api/strategy";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSidebar } from "@/components/ui/sidebar";
+import { Maximize2, Minimize2 } from "lucide-react";
 import StrategySpec from "./StrategySpec";
 import CurrentData from "./CurrentData";
 import BuildControls from "./BuildControls";
@@ -14,23 +14,6 @@ interface Props {
 
 export default function StrategyDetail({ className }: Props) {
   const [chartExpanded, setChartExpanded] = useState(false);
-  const { setOpen: setSidebarOpen } = useSidebar();
-  const sidebarWasOpen = useRef(true);
-
-  const handleToggleExpand = useCallback(() => {
-    setChartExpanded((prev) => {
-      const next = !prev;
-      if (next) {
-        // Collapsing sidebar when expanding chart
-        sidebarWasOpen.current = true; // sidebar state before expand
-        setSidebarOpen(false);
-      } else {
-        // Restore sidebar when collapsing chart
-        setSidebarOpen(sidebarWasOpen.current);
-      }
-      return next;
-    });
-  }, [setSidebarOpen]);
 
   const {
     data: status,
@@ -52,7 +35,7 @@ export default function StrategyDetail({ className }: Props) {
   }
 
   return (
-    <div className={`mx-auto space-y-4 transition-all ${chartExpanded ? "max-w-7xl" : "max-w-3xl"}`}>
+    <div className={`mx-auto space-y-4 transition-all ${chartExpanded ? "max-w-full" : "max-w-5xl"}`}>
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -73,16 +56,25 @@ export default function StrategyDetail({ className }: Props) {
             </span>
           </div>
         </div>
-        <Badge
-          variant={status.has_manifest ? "default" : "secondary"}
-          className={
-            status.has_manifest
-              ? "bg-green-900/50 text-green-300 hover:bg-green-900/50"
-              : ""
-          }
-        >
-          {status.has_manifest ? "Data Ready" : "No Data"}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge
+            variant={status.has_manifest ? "default" : "secondary"}
+            className={
+              status.has_manifest
+                ? "bg-green-900/50 text-green-300 hover:bg-green-900/50"
+                : ""
+            }
+          >
+            {status.has_manifest ? "Data Ready" : "No Data"}
+          </Badge>
+          <button
+            onClick={() => setChartExpanded((prev) => !prev)}
+            className="rounded p-1.5 text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition"
+            title={chartExpanded ? "Collapse view" : "Expand view"}
+          >
+            {chartExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
 
       {/* Data Spec */}
@@ -96,7 +88,6 @@ export default function StrategyDetail({ className }: Props) {
           errors={status.errors}
           onDeleted={refetch}
           chartExpanded={chartExpanded}
-          onToggleExpand={handleToggleExpand}
         />
       ) : (
         <BuildControls className={className} onBuilt={refetch} />

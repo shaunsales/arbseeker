@@ -360,7 +360,7 @@ async def build_strategy_data(req: BuildRequest):
 # ---------------------------------------------------------------------------
 
 # Indicator columns that should overlay on the price chart (same scale as price)
-_PRICE_OVERLAY_PREFIXES = ("SMA_", "EMA_", "BB_", "VWAP")
+_PRICE_OVERLAY_PREFIXES = ("SMA_", "EMA_", "BB_", "VWAP", "PSAR", "SuperTrend_", "KCU_", "KCM_", "KCL_", "DCU_", "DCM_", "DCL_", "BBU_", "BBM_", "BBL_")
 
 
 # ---------------------------------------------------------------------------
@@ -578,11 +578,36 @@ async def strategy_data_preview(
             for ts, v in chart_df[col].items()
         ]
 
+    # Build indicator render metadata from INDICATOR_REGISTRY
+    indicator_meta = {}
+    for col in indicator_cols:
+        # Match column name to registry key (e.g. "RSI_14" -> "rsi", "SOBV_14" -> "sobv")
+        matched_key = None
+        for reg_key in INDICATOR_REGISTRY:
+            prefix = reg_key.upper() + "_"
+            if col.startswith(prefix) or col == reg_key.upper():
+                matched_key = reg_key
+                break
+        if matched_key:
+            reg = INDICATOR_REGISTRY[matched_key]
+            indicator_meta[col] = {
+                "display": reg.get("display", "panel"),
+                "render": reg.get("render", {"type": "line"}),
+                "label": reg.get("label", col),
+            }
+        else:
+            indicator_meta[col] = {
+                "display": "panel",
+                "render": {"type": "line"},
+                "label": col,
+            }
+
     chart_data = {
         "ohlcv": ohlcv_data,
         "volume": volume_data,
         "overlays": overlays_data,
         "indicators": indicators_data,
+        "indicator_meta": indicator_meta,
         "resampled": chart_interval is not None,
         "chart_interval": chart_interval,
         "original_bars": original_bars,

@@ -15,6 +15,7 @@ import type {
   IndicatorResult,
   RenderSpec,
 } from "@/types/api";
+import ChartZoomControls from "@/components/ui/chart-zoom-controls";
 
 interface Props {
   chartData: StrategyChartData;
@@ -250,6 +251,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
   const volumeRef = useRef<HTMLDivElement>(null);
   const chartsRef = useRef<IChartApi[]>([]);
   const [hidden, setHidden] = useState<string[]>([]);
+  const [chartVersion, setChartVersion] = useState(0);
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
 
@@ -298,17 +300,16 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
   const adHocPanelResults = adHocData?.results.filter((r) => r.display === "panel" && !r.error) ?? [];
 
   // Count visible panel indicators to compute chart height
+  // Each built panel indicator gets its own pane
   const visibleBuiltPanels = Object.keys(chartData?.indicators || {}).filter(
     (col) => !hiddenSet.has(`built:${col}`)
   );
   const visibleAdHocPanels = adHocPanelResults.filter(
     (ind) => !hiddenSet.has(`adhoc:${ind.name}`)
   );
-  // Group built panels into one pane, each ad-hoc panel gets its own pane
-  const numPanelPanes =
-    (visibleBuiltPanels.length > 0 ? 1 : 0) + visibleAdHocPanels.length;
-  const baseHeight = expanded ? 500 : 300;
-  const paneHeight = expanded ? 160 : 120;
+  const numPanelPanes = visibleBuiltPanels.length + visibleAdHocPanels.length;
+  const baseHeight = expanded ? 500 : 400;
+  const paneHeight = expanded ? 100 : 80;
   const mainChartHeight = baseHeight + numPanelPanes * paneHeight;
 
   useEffect(() => {
@@ -327,6 +328,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
         horzLines: { color: "#1f2937" },
       },
       crosshair: { mode: 0 },
+      handleScale: { mouseWheel: false },
       rightPriceScale: { borderColor: "#374151" },
       timeScale: { borderColor: "#374151", timeVisible: true },
     };
@@ -352,11 +354,40 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
     });
     candleSeries.setData(chartData.ohlcv as never[]);
 
-    // Pane 0: Strategy overlays (from built data) — filtered by visibility
+    // Pane 0: Strategy overlays (from built data) — use render specs
+    const meta = chartData.indicator_meta || {};
     let ci = 0;
     for (const [name, data] of Object.entries(chartData.overlays || {})) {
       if (!hiddenSet.has(`built:${name}`)) {
-        renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1);
+        const spec = meta[name];
+        const renderType = spec?.render?.type ?? "line";
+        const color = COLORS[ci % COLORS.length];
+
+        if (renderType === "markers") {
+          // PSAR-style dots
+          const dotColor = (spec?.render as any)?.color ?? "#f59e0b";
+          const s = chart.addCustomSeries(new DotsSeries(), {
+            dotColor,
+            radius: 2,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            title: name,
+          });
+          s.setData(data as never[]);
+        } else if (renderType === "colored_line") {
+          // SuperTrend: color by above/below price
+          const closeMap = new Map<number, number>();
+          for (const pt of chartData.ohlcv) closeMap.set(pt.time, pt.close);
+          const coloredData = (data as TimeValue[]).map((pt) => {
+            const close = closeMap.get(pt.time);
+            const isAbove = close !== undefined && pt.value > close;
+            return { time: pt.time, value: pt.value, color: isAbove ? ((spec?.render as any)?.above_color ?? "#f97316") : ((spec?.render as any)?.below_color ?? "#38bdf8") };
+          });
+          const s = chart.addSeries(LineSeries, { lineWidth: 2, title: name });
+          s.setData(coloredData as never[]);
+        } else {
+          renderLineOnChart(chart, data as TimeValue[], name, color, 1);
+        }
       }
       ci++;
     }
@@ -373,16 +404,32 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
     // Track next pane index (pane 0 = price, pane 1+ = panels)
     let nextPane = 1;
 
-    // Pane 1: Built-data separate indicators (all on one pane) — filtered
-    if (visibleBuiltPanels.length > 0) {
-      const pane = nextPane++;
-      ci = 0;
-      for (const [name, data] of Object.entries(chartData.indicators || {})) {
-        if (!hiddenSet.has(`built:${name}`)) {
-          renderLineOnChart(chart, data as TimeValue[], name, COLORS[ci % COLORS.length], 1, pane);
+    // Each built panel indicator gets its own pane with proper render spec
+    ci = 0;
+    for (const [name, data] of Object.entries(chartData.indicators || {})) {
+      if (!hiddenSet.has(`built:${name}`)) {
+        const pane = nextPane++;
+        const spec = meta[name];
+        const renderType = spec?.render?.type ?? "line";
+        const color = COLORS[ci % COLORS.length];
+
+        if (renderType === "histogram") {
+          const histData = (data as TimeValue[]).map((pt) => ({
+            time: pt.time, value: pt.value,
+            color: pt.value >= 0 ? "#38bdf880" : "#f472b680",
+          }));
+          const s = chart.addSeries(HistogramSeries, { priceScaleId: "", title: name }, pane);
+          s.setData(histData as never[]);
+        } else {
+          renderLineOnChart(chart, data as TimeValue[], name, color, 2, pane);
         }
-        ci++;
+
+        // Add reference level lines (e.g. RSI 30/70, ROC 0)
+        if ((spec?.render as any)?.levels?.length) {
+          addLevelLines(chart, (spec.render as any).levels, pane);
+        }
       }
+      ci++;
     }
 
     // Pane 2+: Ad-hoc panel indicators (one pane each) — filtered
@@ -395,6 +442,7 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
     }
 
     chart.timeScale().fitContent();
+    setChartVersion((v) => v + 1);
 
     // ── Volume chart (separate, small) ──
     if (volumeRef.current && chartData.volume?.length) {
@@ -429,6 +477,9 @@ export default function StrategyChart({ chartData, separateCols, adHocData, expa
 
   return (
     <div className="space-y-1">
+      {/* Zoom controls */}
+      <ChartZoomControls chartsRef={chartsRef} chartVersion={chartVersion} />
+
       {/* Legend / visibility toggles */}
       {legendItems.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-1 py-1.5">

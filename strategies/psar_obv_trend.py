@@ -185,6 +185,10 @@ class PSAROBVTrend(SingleAssetStrategy):
                 "1h": [
                     ("psar", {"af": 0.02, "af_step": 0.02, "max_af": 0.2}),
                     ("sobv", {"length": 14}),
+                    ("adx", {"length": 14}),
+                    ("atr", {"length": 14}),
+                    ("rsi", {"length": 14}),
+                    ("roc", {"length": 10}),
                 ],
             },
         )
@@ -193,6 +197,10 @@ class PSAROBVTrend(SingleAssetStrategy):
         return [
             ("psar", {"af": 0.02, "af_step": 0.02, "max_af": 0.2}),
             ("sobv", {"length": 14}),
+            ("adx", {"length": 14}),
+            ("atr", {"length": 14}),
+            ("rsi", {"length": 14}),
+            ("roc", {"length": 10}),
         ]
 
     def on_bar(self, timestamp, data: StrategyData, balance: float, position: Optional[Position]):

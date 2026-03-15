@@ -115,12 +115,49 @@ def _resample_bars(df: pd.DataFrame, interval: str) -> pd.DataFrame:
         agg["low"] = "min"
     if "volume" in df.columns:
         agg["volume"] = "sum"
-    # nav / drawdown from bar-level results
-    if "nav" in df.columns:
-        agg["nav"] = "last"
-    if "drawdown_pct" in df.columns:
-        agg["drawdown_pct"] = "min"
     return df.resample(interval).agg(agg).dropna(subset=["close"])
+
+
+def _reconstruct_equity(
+    close_1m: pd.Series,
+    trades_df: pd.DataFrame | None,
+    initial_capital: float,
+) -> pd.Series:
+    """Reconstruct per-bar NAV from trades and 1m close prices.
+
+    Returns a Series indexed like *close_1m* with the mark-to-market NAV
+    at every minute bar.
+    """
+    if trades_df is None or len(trades_df) == 0:
+        return pd.Series(initial_capital, index=close_1m.index, dtype=float)
+
+    trades = trades_df.sort_values("entry_time").reset_index(drop=True)
+
+    # 1) Build cumulative realised-PnL (balance) via exit timestamps
+    balance_bumps = pd.Series(0.0, index=close_1m.index)
+    for _, t in trades.iterrows():
+        exit_ts = pd.Timestamp(t["exit_time"])
+        idx = close_1m.index.searchsorted(exit_ts, side="right") - 1
+        if 0 <= idx < len(close_1m):
+            balance_bumps.iloc[idx] += float(t["net_pnl"])
+    balance = initial_capital + balance_bumps.cumsum()
+
+    # 2) Overlay unrealised PnL while each position is open
+    unrealised = pd.Series(0.0, index=close_1m.index)
+    for _, t in trades.iterrows():
+        entry_ts = pd.Timestamp(t["entry_time"])
+        exit_ts = pd.Timestamp(t["exit_time"])
+        entry_price = float(t["entry_price"])
+        size = float(t["size"])
+        is_long = t.get("side", "long") == "long"
+
+        mask = (close_1m.index >= entry_ts) & (close_1m.index < exit_ts)
+        if is_long:
+            unrealised[mask] = (close_1m[mask] - entry_price) / entry_price * size
+        else:
+            unrealised[mask] = (entry_price - close_1m[mask]) / entry_price * size
+
+    return balance + unrealised
 
 
 def _series_to_json(timestamps, values) -> list[dict]:
@@ -165,83 +202,83 @@ async def view_run(strategy_name: str, run_id: str):
         meta = json.load(f)
 
     # ------------------------------------------------------------------
-    # Load bar-level data and resample to a sensible chart interval
+    # Load raw 1m OHLCV + trades → build chart data (no bars.parquet)
     # ------------------------------------------------------------------
-    bars_path = results_dir / f"{run_id}_bars.parquet"
     chart_data: dict = {}
     resampled_index: pd.DatetimeIndex | None = None
 
-    if bars_path.exists():
-        bars_df = pd.read_parquet(bars_path)
+    raw_1m_path = strategy_folder(strategy_name) / "data" / "1m.parquet"
+    trades_path = results_dir / f"{run_id}_trades.parquet"
+    trades_df: pd.DataFrame | None = None
+    if trades_path.exists():
+        trades_df = pd.read_parquet(trades_path)
 
-        # Use the strategy's indicator interval for charts (aligns with decisions);
-        # fall back to auto-pick when no higher-timeframe indicators exist.
-        spec_interval = _chart_interval_from_spec(meta.get("config", {}))
-        interval = spec_interval or _pick_resample_interval(len(bars_df))
-        bars_r = _resample_bars(bars_df, interval)
-        resampled_index = bars_r.index
+    if raw_1m_path.exists():
+        raw_1m = pd.read_parquet(raw_1m_path)
 
-        chart_data["interval"] = interval
-        chart_data["price"] = _series_to_json(bars_r.index, bars_r["close"])
+        # Clip to backtest window from meta
+        bt_start = pd.Timestamp(meta.get("start_time", str(raw_1m.index.min())))
+        bt_end = pd.Timestamp(meta.get("end_time", str(raw_1m.index.max())))
+        raw_1m = raw_1m.loc[bt_start:bt_end]
 
-        # OHLCV for candlestick rendering — bars parquet may only have close,
-        # so load raw 1m data from strategy data folder and resample it.
-        # Filter to the backtest window to exclude indicator-warmup bars.
-        bt_start = bars_df.index.min()
-        bt_end = bars_df.index.max()
+        if len(raw_1m) > 0:
+            # Pick chart interval and resample OHLCV
+            spec_interval = _chart_interval_from_spec(meta.get("config", {}))
+            interval = spec_interval or _pick_resample_interval(len(raw_1m))
+            ohlcv_r = _resample_bars(raw_1m, interval)
+            resampled_index = ohlcv_r.index
 
-        ohlcv_data = []
-        volume_data = []
-        ohlcv_source = bars_r
-        has_ohlc = all(c in bars_r.columns for c in ["open", "high", "low", "close"])
-        if not has_ohlc:
-            raw_1m_path = strategy_folder(strategy_name) / "data" / "1m.parquet"
-            if raw_1m_path.exists():
-                raw_1m = pd.read_parquet(raw_1m_path, columns=["open", "high", "low", "close", "volume"])
-                raw_1m = raw_1m.loc[bt_start:bt_end]  # clip to backtest window
-                ohlcv_source = _resample_bars(raw_1m, interval)
-                has_ohlc = all(c in ohlcv_source.columns for c in ["open", "high", "low", "close"])
+            chart_data["interval"] = interval
+            chart_data["price"] = _series_to_json(ohlcv_r.index, ohlcv_r["close"])
 
-        if has_ohlc:
-            for ts, row in ohlcv_source.iterrows():
+            # OHLCV candlesticks + volume
+            ohlcv_data = []
+            volume_data = []
+            for ts, row in ohlcv_r.iterrows():
                 t = int(ts.timestamp())
                 o, h, l, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
                 if any(np.isnan(v) for v in [o, h, l, c]):
                     continue
                 ohlcv_data.append({"time": t, "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
-                if "volume" in ohlcv_source.columns:
+                if "volume" in ohlcv_r.columns:
                     vol = float(row["volume"])
                     if not np.isnan(vol):
                         volume_data.append({"time": t, "value": round(vol, 2), "color": "#22c55e80" if c >= o else "#ef444480"})
-        chart_data["ohlcv"] = ohlcv_data
-        chart_data["volume"] = volume_data
+            chart_data["ohlcv"] = ohlcv_data
+            chart_data["volume"] = volume_data
 
-        if "nav" in bars_r.columns:
-            chart_data["equity"] = _series_to_json(bars_r.index, bars_r["nav"])
-        if "drawdown_pct" in bars_r.columns:
-            chart_data["drawdown"] = _series_to_json(bars_r.index, bars_r["drawdown_pct"])
+            # Reconstruct equity/NAV from trades + 1m close prices
+            initial_capital = float(meta.get("initial_capital", 100_000))
+            nav_1m = _reconstruct_equity(raw_1m["close"], trades_df, initial_capital)
 
-        # Daily-resampled NAV + rolling max drawdown for the Performance chart
-        if "nav" in bars_df.columns:
-            daily = bars_df[["nav"]].resample("1D").last().dropna()
-            initial_nav = daily["nav"].iloc[0]
-            if initial_nav and initial_nav != 0:
-                daily_nav = daily["nav"] / initial_nav
-            else:
-                daily_nav = daily["nav"]
-            peak = daily_nav.cummax()
-            daily_dd = ((daily_nav - peak) / peak) * 100
-            rolling_mdd = daily_dd.cummin()
-            chart_data["daily_nav"] = _series_to_json(daily.index, daily_nav)
-            chart_data["daily_mdd"] = _series_to_json(daily.index, rolling_mdd)
+            # Resample NAV to chart interval
+            nav_r = nav_1m.resample(interval).last().reindex(ohlcv_r.index, method="ffill")
+            chart_data["equity"] = _series_to_json(nav_r.index, nav_r)
+
+            # Drawdown
+            peak = nav_r.cummax()
+            drawdown_pct = ((nav_r - peak) / peak) * 100
+            chart_data["drawdown"] = _series_to_json(nav_r.index, drawdown_pct)
+
+            # Daily NAV + rolling max drawdown for Performance chart
+            daily = nav_1m.resample("1D").last().dropna()
+            if len(daily) > 0:
+                initial_nav = daily.iloc[0]
+                if initial_nav and initial_nav != 0:
+                    daily_nav = daily / initial_nav
+                else:
+                    daily_nav = daily
+                peak_d = daily_nav.cummax()
+                daily_dd = ((daily_nav - peak_d) / peak_d) * 100
+                rolling_mdd = daily_dd.cummin()
+                chart_data["daily_nav"] = _series_to_json(daily.index, daily_nav)
+                chart_data["daily_mdd"] = _series_to_json(daily.index, rolling_mdd)
 
     # ------------------------------------------------------------------
     # Load trades
     # ------------------------------------------------------------------
     trades = []
-    trades_path = results_dir / f"{run_id}_trades.parquet"
-    if trades_path.exists():
-        trades_df = pd.read_parquet(trades_path)
+    if trades_df is not None:
         for _, row in trades_df.iterrows():
             raw_meta = row.get("metadata", None)
             trade_metadata = None
