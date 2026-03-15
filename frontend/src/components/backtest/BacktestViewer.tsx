@@ -845,21 +845,22 @@ function BacktestCharts({
     };
   }, [chartData, overlayIndicators, panelIndicators, hidden, mainChartHeight, positionData]);
 
-  // ── Zoom to selected trade ──
+  // ── Scroll to selected trade (preserve user's zoom level) ──
   useEffect(() => {
     if (selectedTradeIdx == null || !trades[selectedTradeIdx]) return;
     const t = trades[selectedTradeIdx];
     const entryTs = Math.floor(new Date(t.entry_time).getTime() / 1000);
     const exitTs = Math.floor(new Date(t.exit_time).getTime() / 1000);
-    const duration = exitTs - entryTs;
-    const padding = Math.max(duration * 0.5, 3600); // at least 1h padding
-    const from = entryTs - padding;
-    const to = exitTs + padding;
+    const midTs = (entryTs + exitTs) / 2;
 
     chartsRef.current.forEach((chart) => {
-      chart.timeScale().setVisibleRange({
-        from: from as never,
-        to: to as never,
+      const ts = chart.timeScale();
+      const range = ts.getVisibleRange();
+      if (!range) return;
+      const halfSpan = ((range.to as number) - (range.from as number)) / 2;
+      ts.setVisibleRange({
+        from: (midTs - halfSpan) as never,
+        to: (midTs + halfSpan) as never,
       });
     });
   }, [selectedTradeIdx, trades]);
