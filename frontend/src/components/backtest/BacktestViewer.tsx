@@ -357,9 +357,11 @@ function BacktestCharts({
   }, [overlayIndicators, panelIndicators]);
 
   // Generate position state data from trades (for overlay histogram)
+  // Highlight the selected trade brighter, dim the rest
   const positionData = useMemo(() => {
     if (!trades.length || !chartData.ohlcv?.length) return [];
-    const tradeTimestamps = trades.map((t) => ({
+    const tradeTimestamps = trades.map((t, i) => ({
+      idx: i,
       entry: Math.floor(new Date(t.entry_time).getTime() / 1000),
       exit: Math.floor(new Date(t.exit_time).getTime() / 1000),
       side: t.side,
@@ -371,12 +373,22 @@ function BacktestCharts({
       );
       if (!active) return { time: bar.time, value: 0, color: "transparent" };
       const val = active.side === "long" ? 1 : -1;
-      const color = active.win
-        ? "rgba(34, 197, 94, 0.5)"
-        : "rgba(239, 68, 68, 0.5)";
+      const isSelected = selectedTradeIdx != null && active.idx === selectedTradeIdx;
+      const hasSel = selectedTradeIdx != null;
+      let color: string;
+      if (isSelected) {
+        // Bright highlight for selected trade
+        color = active.win ? "rgba(34, 197, 94, 0.9)" : "rgba(239, 68, 68, 0.9)";
+      } else if (hasSel) {
+        // Dim non-selected trades when one is selected
+        color = active.win ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.15)";
+      } else {
+        // Normal opacity when nothing selected
+        color = active.win ? "rgba(34, 197, 94, 0.5)" : "rgba(239, 68, 68, 0.5)";
+      }
       return { time: bar.time, value: val, color };
     });
-  }, [trades, chartData.ohlcv]);
+  }, [trades, chartData.ohlcv, selectedTradeIdx]);
 
   // Compute main chart height: base + pane per visible panel indicator + position pane
   const visiblePanels = panelIndicators.filter((ind) => !hidden.has(ind.name));
@@ -423,6 +435,8 @@ function BacktestCharts({
           borderUpColor: "#22c55e",
           wickDownColor: "#ef4444",
           wickUpColor: "#22c55e",
+          lastValueVisible: false,
+          priceLineVisible: false,
         });
         priceSeries.setData(chartData.ohlcv as never[]);
       } else {
@@ -467,7 +481,7 @@ function BacktestCharts({
         } else {
           // Line overlay
           const color = IND_COLORS[idx % IND_COLORS.length];
-          const s = chart.addSeries(LineSeries, { color, lineWidth: 1, title: ind.name });
+          const s = chart.addSeries(LineSeries, { color, lineWidth: 1, title: ind.name, lastValueVisible: false, priceLineVisible: false });
           s.setData(ind.series as never[]);
         }
       });
@@ -478,7 +492,7 @@ function BacktestCharts({
         if (hidden.has(ind.name)) return;
         const pane = nextPane++;
         const color = IND_COLORS[idx % IND_COLORS.length];
-        const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name }, pane);
+        const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title: ind.name, lastValueVisible: false, priceLineVisible: false }, pane);
         s.setData(ind.series as never[]);
       });
 
@@ -509,6 +523,8 @@ function BacktestCharts({
       const volSeries = volChart.addSeries(HistogramSeries, {
         priceFormat: { type: "volume" },
         priceScaleId: "",
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
       volSeries.setData(chartData.volume as never[]);
       volChart.timeScale().fitContent();
@@ -530,6 +546,8 @@ function BacktestCharts({
         lineWidth: 2,
         title: "Equity",
         priceScaleId: "right",
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
       eqSeries.setData(chartData.equity as never[]);
 
@@ -541,6 +559,8 @@ function BacktestCharts({
           bottomColor: "rgba(239, 68, 68, 0.3)",
           title: "Drawdown %",
           priceScaleId: "left",
+          lastValueVisible: false,
+          priceLineVisible: false,
         });
         ddSeries.setData(chartData.drawdown as never[]);
       }
